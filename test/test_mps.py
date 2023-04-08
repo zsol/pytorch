@@ -790,7 +790,7 @@ def mps_ops_modifier(ops):
         'byte': [torch.float16, torch.float32],
     }
 
-    EMPTY_OPS_SKIPLIST = {
+    OPS_SKIPLIST = {
         # Fill tensors with uninitialized data, causing mismatch with CPU.
         # They occasionally match, thus skipping them.
         # See https://github.com/pytorch/pytorch/issues/100175
@@ -806,6 +806,9 @@ def mps_ops_modifier(ops):
         'empty_like': [torch.bool, torch.float16, torch.float32, torch.int16, torch.int32, torch.int64, torch.uint8, torch.int8],
         'empty_permuted': [torch.bool, torch.float16, torch.float32, torch.int16,
                            torch.int32, torch.int64, torch.uint8, torch.int8],
+        # Unsupported
+        # input types 'tensor<1x3x9x9xf16>' and 'tensor<1xf32>' are not broadcast compatible
+        'nn.functional.avg_pool2d': [torch.float16],
     }
 
     def addDecorator(op, d) -> None:
@@ -814,10 +817,10 @@ def mps_ops_modifier(ops):
 
     for op in ops:
         key = op.name + op.variant_test_name
-        if key in EMPTY_OPS_SKIPLIST:
+        if key in OPS_SKIPLIST:
             addDecorator(op, DecorateInfo(
-                         unittest.skip("Skipping empty ops."),
-                         dtypes=EMPTY_OPS_SKIPLIST[key]))
+                         unittest.skip("Skipping empty/unsupported ops."),
+                         dtypes=OPS_SKIPLIST[key]))
         for xfaillist in [UNIMPLEMENTED_XFAILLIST, UNDEFINED_XFAILLIST]:
             if key in xfaillist:
                 addDecorator(op, DecorateInfo(
