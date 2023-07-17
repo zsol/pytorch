@@ -447,6 +447,14 @@ std::tuple<Tensor&, Tensor&, Tensor&> batch_norm_cuda_out(const Tensor& self, co
   }
 
   batch_norm_elementwise(output, self, weight_opt, bias_opt, save_mean, save_invstd);
+
+  if (!train) {
+    auto options = self.options().dtype(
+        at::toAccumulateType(self.scalar_type(), /*is_cuda=*/true));
+    save_mean = at::empty({0}, options);
+    save_invstd = at::empty({0}, options);
+  }
+
   return std::tuple<Tensor&, Tensor&, Tensor&>(output, save_mean, save_invstd);
 }
 
