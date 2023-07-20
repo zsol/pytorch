@@ -163,7 +163,9 @@ def convert_shape_to_symint(
         if isinstance(i, int)
         else int(i)
         if isinstance(i, sympy.Integer)
-        else V.graph.sizevars.shape_env.create_symintnode(i, hint=None)
+        else V.graph.sizevars.shape_env.create_symintnode(
+            i, hint=V.graph.sizevars.shape_env.var_to_val.get(i, None)
+        )
         for i in lst
     ]
 
@@ -389,13 +391,13 @@ def sympy_str(expr: sympy.Expr):
     return str(expr)
 
 
-def sympy_symbol(name) -> sympy.Symbol:
+def sympy_symbol(name, integer=True) -> sympy.Symbol:
     # This should never be used for creating shape/stride symbols, as those
     # should all be allocated before Inductor.
     assert name[0] != "s"
     # NOTE: shape symbols are positive (> 0), but index variables are only
     # non-negative (>= 0).
-    return sympy.Symbol(name, integer=True, nonnegative=True)
+    return sympy.Symbol(name, integer=integer, nonnegative=True)
 
 
 def sympy_subs(expr: sympy.Expr, replacements: Dict[Any, Any]) -> sympy.Expr:

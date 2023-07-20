@@ -1191,6 +1191,9 @@ def wrap_node(x):
         return SymFloat(x)
     elif x.is_bool():
         return SymBool(x)
+    elif isinstance(x, SymNode) and x.pytype == Tuple[int]:
+        # hackery for array-backed SymInts
+        return SymInt(x)
     else:
         raise AssertionError(f"unrecognized return type {x}")
 
@@ -2258,6 +2261,8 @@ Target Guards:
             if hint is not None:
                 assert int(sym) == hint
             return int(sym)
+        if isinstance(sym, sympy.Array) or (hint is not None and isinstance(hint, (list, tuple))):
+            return SymInt(SymNode(sym, self, Tuple[int], hint, fx_node=fx_node))
         return SymInt(SymNode(sym, self, int, hint, fx_node=fx_node))
 
     def create_unspecified_symint_and_symbol(self, value, source, dynamic_dim):
@@ -2311,7 +2316,7 @@ Target Guards:
 
     def create_unspecified_symbol(
         self,
-        val: int,
+        val: Union[int, tuple],
         source: Source,
         dynamic_dim: DimDynamic = DimDynamic.DUCK,
         constraint_dim: DimConstraint = None,  # NB: includes None
@@ -2329,7 +2334,8 @@ Target Guards:
         positive: Optional[bool] = True,
     ) -> "sympy.Expr":
         assert isinstance(source, Source), f"{type(source)} {source}"
-        assert not (positive and val < 0), f"positive set for negative value: {val}"
+        if isinstance(val, int):
+            assert not (positive and val < 0), f"positive set for negative value: {val}"
         # It's always sound to allocate a symbol as DYNAMIC.  If the user
         # constrained the symbol, force the policy to DYNAMIC, because our
         # constraint code will do weird stuff if, e.g., it's duck shaped
@@ -2353,11 +2359,38 @@ Target Guards:
             # If we're not duck shaping, we always create a new symbol
             # Even if we're duck shaping, if we haven't seen this particular
             # value before, we also create a new symbol
-            sympy_expr = sympy.Symbol(f"s{len(self.var_to_val)}", positive=positive, integer=True)
-            self.log.info("create_symbol %s = %s for %s", sympy_expr, val, source.name())
-            self.counter["create_symbol"] += 1
-            # We always associate vars to vals
-            self.var_to_val[sympy_expr] = sympy.Integer(val)
+            if isinstance(val, int):
+                sympy_expr = sympy.Symbol(f"s{len(self.var_to_val)}", positive=positive, integer=True)
+                self.log.info("create_symbol %s = %s for %s", sympy_expr, val, source.name())
+                self.counter["create_symbol"] += 1
+                # We always associate vars to vals
+                self.var_to_val[sympy_expr] = sympy.Integer(val)
+
+                if positive:
+                    # Add assertions for the newly created symbols
+                    self._add_assertion(sympy_expr > 1)
+
+                    # Apply default range, which assumes not zero-one
+                    self.var_to_range[sympy_expr] = self._default_value_range()
+                else:
+                    self.var_to_range[sympy_expr] = self._default_unspecified_value_range()
+
+                # Small performance optimization: if we have a min-max constraint,
+                # we can proactively narrow to that range
+                if isinstance(constraint_dim, StrictMinMaxConstraint):
+                    assert not duck
+                    self.var_to_range[sympy_expr] &= constraint_dim.vr
+
+                vr = self.var_to_range[sympy_expr]
+                if val not in vr:
+                    raise ConstraintViolationError(f"{val} not in range [{vr.lower}, {vr.upper}]")
+            elif isinstance(val, tuple):
+                sympy_expr = sympy.Symbol(f"s{len(self.var_to_val)}", integer=False)
+                log.info("create_symbol %s = %s (%s)", sympy_expr, val, hex(id(self)))
+                self.var_to_val[sympy_expr] = sympy.Array(val)
+            else:
+                raise NotImplementedError(f"Unsupported val type in create_symbol(): {type(val)}")
+
             # Do the appending later, because we always want to populate this
             self.var_to_sources[sympy_expr] = []
             # Create a Z3 variable for the new symbol.
@@ -2366,25 +2399,6 @@ Target Guards:
             if duck:
                 # Make sure to reuse this symbol for subsequent duck shaping
                 self.val_to_var[val] = sympy_expr
-
-            if positive:
-                # Add assertions for the newly created symbols
-                self._add_assertion(sympy_expr > 1)
-
-                # Apply default range, which assumes not zero-one
-                self.var_to_range[sympy_expr] = self._default_value_range()
-            else:
-                self.var_to_range[sympy_expr] = self._default_unspecified_value_range()
-
-            # Small performance optimization: if we have a min-max constraint,
-            # we can proactively narrow to that range
-            if isinstance(constraint_dim, StrictMinMaxConstraint):
-                assert not duck
-                self.var_to_range[sympy_expr] &= constraint_dim.vr
-
-            vr = self.var_to_range[sympy_expr]
-            if val not in vr:
-                raise ConstraintViolationError(f"{val} not in range [{vr.lower}, {vr.upper}]")
 
             r = sympy_expr
         else:
@@ -2621,8 +2635,30 @@ Target Guards:
             for i, ss in enumerate(t.size()):
                 property_source = TensorPropertySource(source, TensorProperty.SIZE, i)
                 track_symint(property_source, ss, constraint[i])
+
+                # TODO: Fix this hackery; assume contiguous for NT and avoid guarding
+                if t.is_nested:
+                    input_guards.pop()
             for i, ss in enumerate(t.stride()):
                 track_symint(TensorPropertySource(source, TensorProperty.STRIDE, i), ss)
+
+                # TODO: Fix this hackery; assume contiguous for NT and avoid guarding
+                if t.is_nested:
+                    input_guards.pop()
+
+            if t.is_nested:
+                # also track the jagged format of the NT
+                # TODO: Fix source
+                property_source = TensorPropertySource(source, TensorProperty.SIZE, 0)
+                track_symint(property_source, t.jagged_sizes[0], None)
+                property_source = TensorPropertySource(source, TensorProperty.STORAGE_OFFSET)
+                track_symint(property_source, t.jagged_storage_offset, None)
+                for i, ss in enumerate(t.jagged_strides):
+                    track_symint(TensorPropertySource(source, TensorProperty.STRIDE, i), ss)
+
+                    # TODO: Fix this hackery; assume contiguous for NT and avoid guarding
+                    if t.is_nested:
+                        input_guards.pop()
             track_symint(TensorPropertySource(source, TensorProperty.STORAGE_OFFSET), t.storage_offset())
 
         # 1. Every input must equal the final simplified symbolic expression
@@ -2752,6 +2788,10 @@ Target Guards:
         # these should probably get reported in tests too
         if not _simplified:
             for symbol, sources in symbol_to_source.items():
+                if not symbol.is_integer:
+                    # for the NT case
+                    continue
+
                 r = self.var_to_range[symbol]
 
                 for c in symbol_to_constraints[symbol]:
