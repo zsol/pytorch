@@ -136,9 +136,9 @@ class IncorrectUsage(Exception):
     pass
 
 
-def unimplemented(msg: str):
+def unimplemented(msg: str, cause=None):
     assert msg != os.environ.get("BREAK", False)
-    raise Unsupported(msg)
+    raise Unsupported(msg) from cause
 
 
 def warning(msg: str):
