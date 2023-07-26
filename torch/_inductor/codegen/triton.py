@@ -49,6 +49,7 @@ from .common import (
     PythonPrinter,
     SizeArg,
 )
+from .multi_kernel import MultiKernel
 from .triton_utils import config_of, signature_of
 
 log = logging.getLogger(__name__)
@@ -746,6 +747,7 @@ class TritonKernel(Kernel):
         mutations=None,
         pid_cache=None,
         reduction_hint=ReductionHint.DEFAULT,
+        disable_persistent_reduction=False,
     ):
         if pid_cache is None:
             pid_cache = {}
@@ -767,7 +769,9 @@ class TritonKernel(Kernel):
         self.indirect_max_sizes: Dict[Tuple[str, str], [sympy.Expr, str]] = {}
         self.last_usage = set()
 
-        self.persistent_reduction = self.should_use_persistent_reduction()
+        self.persistent_reduction = (
+            not disable_persistent_reduction
+        ) and self.should_use_persistent_reduction()
         self.no_x_dim = (
             self.reduction_hint == ReductionHint.INNER
             and self.persistent_reduction
@@ -799,6 +803,9 @@ class TritonKernel(Kernel):
         threshold = {
             ReductionHint.INNER: 1024,
         }.get(self.reduction_hint, 64)
+        if config.triton.multi_kernel:
+            # TODO: this need to be finer tested and tuned
+            threshold *= 16
         last_numel = self.numels[-1]
         if not isinstance(last_numel, (int, sympy.Integer)):
             # Not static
@@ -1895,14 +1902,16 @@ class TritonKernel(Kernel):
                 sizes.append("1")
         return f"[{', '.join(sizes)}]"
 
-    def call_kernel(self, name: str):
-        wrapper = V.graph.wrapper_code
+    def get_call_args(self):
         _, call_args, _ = self.args.python_argdefs()
         # dynamo wraps unspec variable as 0d CPU tensor, need convert to scalar
         for i in range(len(call_args)):
             if V.graph.is_unspec_arg(call_args[i]):
                 call_args[i] = call_args[i] + ".item()"
-        grid = []
+
+        return call_args
+
+    def add_numel_to_call_args_and_grid(self, call_args, grid):
         # TODO(jansel): if there are constants, we shouldn't bother passing them as args
         for tree in self.range_trees:
             if isinstance(tree.numel, (sympy.Integer, sympy.Symbol)):
@@ -1915,6 +1924,11 @@ class TritonKernel(Kernel):
             if tree.prefix != "r":
                 grid.append(expr)
 
+    def call_kernel(self, name: str):
+        wrapper = V.graph.wrapper_code
+        call_args = self.get_call_args()
+        grid = []
+        self.add_numel_to_call_args_and_grid(call_args, grid)
         wrapper.generate_kernel_call(
             name,
             call_args,
@@ -2261,11 +2275,16 @@ class TritonScheduling:
             node_schedule, numel, reduction_numel
         )
 
+        kernel_args = tiled_groups
+        kernel_kwargs = {
+            "reduction_hint": reduction_hint_val,
+            "mutations": mutations,
+            "index_dtype": index_dtype,
+        }
+        V.graph.save_state()
         kernel = TritonKernel(
-            *tiled_groups,
-            reduction_hint=reduction_hint_val,
-            mutations=mutations,
-            index_dtype=index_dtype,
+            *kernel_args,
+            **kernel_kwargs,
         )
 
         self.codegen_node_schedule_with_kernel(node_schedule, kernel)
@@ -2273,7 +2292,27 @@ class TritonScheduling:
         src_code = kernel.codegen_kernel()
         kernel_name = self.define_kernel(src_code, node_schedule)
         self.codegen_comment(node_schedule)
-        kernel.call_kernel(kernel_name)
+        kernel.kernel_name = kernel_name
+        kernel.code_hash = code_hash(src_code)
+
+        if kernel.persistent_reduction and config.triton.multi_kernel:
+            V.graph.restore_state()
+            kernel2 = TritonKernel(
+                *kernel_args,
+                **kernel_kwargs,
+                disable_persistent_reduction=True,
+            )
+            self.codegen_node_schedule_with_kernel(node_schedule, kernel2)
+            src_code2 = kernel2.codegen_kernel()
+            kernel_name2 = self.define_kernel(src_code2, node_schedule)
+            kernel2.kernel_name = kernel_name2
+            kernel2.code_hash = code_hash(src_code2)
+
+            multi_kernel = MultiKernel([kernel, kernel2])
+            multi_kernel.call_kernel()
+        else:
+            V.graph.drop_state()
+            kernel.call_kernel(kernel_name)
 
         if config.warn_mix_layout:
             kernel.warn_mix_layout(kernel_name)
@@ -2358,6 +2397,7 @@ class TritonScheduling:
             wrapper.define_kernel(
                 kernel_name, compile_wrapper.getvalue(), metadata_comment
             )
+
         return kernel_name
 
     def codegen_template(self, template_node, epilogue_nodes):
