@@ -18823,12 +18823,13 @@ python_ref_db = [
     PythonRefInfo(
         "_refs.bucketize",
         torch_opinfo_name="bucketize",
-        skips=(
-            # RuntimeError: It appears that you're trying to get value out of a tracing tensor with
-            #  aten._local_scalar_dense.default - erroring out! [...]
-            # triggered by mid_val = boundaries[mid]
-            DecorateInfo(unittest.expectedFailure, "TestCommon", "test_python_ref_executor"),
-        )
+        supports_nvfuser=False,
+        # skips=(
+        #     # RuntimeError: It appears that you're trying to get value out of a tracing tensor with
+        #     #  aten._local_scalar_dense.default - erroring out! [...]
+        #     # triggered by mid_val = boundaries[mid]
+        #     DecorateInfo(unittest.expectedFailure, "TestCommon", "test_python_ref_executor"),
+        # )
     ),
     PythonRefInfo(
         "_refs.equal",
@@ -19355,12 +19356,6 @@ python_ref_db = [
         # For simpler indexing, we flatten target indices, then reshape the result tensor.
         # This creates inconsistent view state with reference impl.
         validate_view_consistency=False,
-        skips=(
-            # RuntimeError: It appears that you're trying to get value out of a tracing tensor - erroring out!
-            DecorateInfo(
-                unittest.expectedFailure, 'TestCommon', 'test_python_ref_executor', device_type="cuda"
-            ),
-        ),
     ),
     PythonRefInfo(
         "_refs.nn.functional.huber_loss",
