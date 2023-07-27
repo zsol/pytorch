@@ -22,7 +22,13 @@ from .autotune_process import BenchmarkRequest, TensorMeta
 from .codecache import code_hash, PersistentCache, PyCodeCache
 
 from .codegen.common import IndentedBuffer
-from .codegen.triton import texpr, TritonKernel, TritonPrinter, TritonScheduling
+from .codegen.triton import (
+    texpr,
+    TritonKernel,
+    TritonOverrides,
+    TritonPrinter,
+    TritonScheduling,
+)
 
 from .codegen.triton_utils import config_of, signature_of
 
@@ -61,6 +67,7 @@ class TritonTemplateKernel(TritonKernel):
         prefix_args=0,
         suffix_args=0,
         epilogue_fn=identity,
+        subgraph=None,
         *,
         index_dtype,
     ):
@@ -75,6 +82,7 @@ class TritonTemplateKernel(TritonKernel):
         self.defines = defines
         self.kernel_name = kernel_name
         self.template_mask = None
+        self.modification_cache = None
         self.use_jit = use_jit
         self.num_stages = num_stages
         self.num_warps = num_warps
@@ -85,6 +93,8 @@ class TritonTemplateKernel(TritonKernel):
         self.prefix_args = prefix_args
         self.suffix_args = suffix_args
         self.epilogue_fn = epilogue_fn
+        # For additional graphs
+        self.subgraph = subgraph
 
     def jit_line(self):
         if self.use_jit:
@@ -186,6 +196,42 @@ class TritonTemplateKernel(TritonKernel):
             val = self.named_input_nodes[name].get_stride()[index]
         return texpr(self.rename_indexing(val))
 
+    def modification(self, **fixed_inputs):
+        # HACK, but I can't figure out how to reuse existing Triton codegen properly
+        class PlaceholderSubstitution(V.WrapperHandler):
+            self.name = "PlaceholderSubstitution"
+
+            def load(self, name: str, index: sympy.Expr):
+                if name not in fixed_inputs:
+                    # return self._inner.load(name, index)
+                    assert (
+                        False
+                    ), f"All loads should be coming from fixed inputs - {name}"
+                return f"({fixed_inputs[name]})"
+
+            # Doesn't work yet
+            def indirect_indexing(self, index_var, size, check):
+                from .utils import sympy_symbol
+
+                return self._inner.indirect_indexing(index_var, size, False)
+                # return sympy_symbol(str(index_var))
+
+        if self.modification_cache is None:
+            with V.set_ops_handler(PlaceholderSubstitution(V.ops)):
+                # Kinda hacky
+                if isinstance(self.subgraph.data.data, ir.InputBuffer):
+                    out = self.subgraph.make_loader()((1,))
+                else:
+                    out = self.subgraph.data.data.data.inner_fn((1,))
+
+            self.codegen_body()
+            self.body.writeline(f"{fixed_inputs['out']} = {out.value}")
+
+            self.modification_cache = self.body.getvalue()
+            self.body.clear()
+            self.cse.invalidate(set())
+        return self.modification_cache
+
     def store_output(self, indices, val, mask):
         """
         Hook called from template code to store the final output
@@ -267,6 +313,7 @@ class TritonTemplateKernel(TritonKernel):
                 self.size,
                 self.stride,
                 self.store_output,
+                self.modification,
                 self.make_load,
             ]
         }
@@ -330,14 +377,24 @@ class TritonTemplateKernel(TritonKernel):
             )
 
 
+def indent_except_first(s, amount=1, ch="    "):
+    lines = s.splitlines(True)
+    if len(lines) > 1:
+        lines[1:] = [amount * ch + line for line in lines[1:]]
+    return "".join(lines)
+
+
 @functools.lru_cache(None)
 def _jinja2_env():
     try:
         import jinja2
 
-        return jinja2.Environment(
+        env = jinja2.Environment(
             undefined=jinja2.StrictUndefined,
         )
+        env.filters["indent_except_first"] = indent_except_first
+        return env
+
     except ImportError:
         return None
 
@@ -396,6 +453,7 @@ class TritonTemplate:
         layout,
         num_stages,
         num_warps,
+        subgraph=None,
         prefix_args=0,
         suffix_args=0,
         epilogue_fn=identity,
@@ -429,6 +487,7 @@ class TritonTemplate:
             suffix_args=suffix_args,
             epilogue_fn=epilogue_fn,
             index_dtype="tl.int32",
+            subgraph=subgraph,
         )
         with patch.object(
             V.graph, "get_dtype", self.fake_get_dtype(fake_out)

@@ -294,12 +294,18 @@ def aggregate_origins(node_schedule):
         return set()
 
 
+def get_aten_name(original_aten):
+    if hasattr(original_aten, "_overloadpacket"):
+        return original_aten._overloadpacket.__name__
+    return "foo"
+
+
 def get_fused_kernel_name(node_schedule, descriptive_names):
     all_origins = aggregate_origins(node_schedule)
     if descriptive_names == "original_aten":
         # Bases the kernel name off of the top-level aten operator (i.e. pre-decompositions)
         sources = [
-            origin.meta["original_aten"]._overloadpacket.__name__
+            get_aten_name(origin.meta["original_aten"])
             for origin in all_origins
             if origin.op == "call_function" and "original_aten" in origin.meta
         ]
@@ -332,7 +338,7 @@ def get_kernel_metadata(node_schedule, wrapper):
     original_aten_dict = collections.defaultdict(list)
     for node in inductor_nodes:
         if "original_aten" in node.meta:
-            key = str(node.meta["original_aten"]._overloadpacket)
+            key = get_aten_name(node.meta["original_aten"])
             original_aten_dict[key].append(node.name)
         if "from_node" in node.meta:
             key = node.meta["from_node"][0][0]
