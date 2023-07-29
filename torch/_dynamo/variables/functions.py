@@ -8,7 +8,7 @@ import torch
 
 from .. import variables
 from ..bytecode_transformation import create_call_function, create_rot_n
-from ..exc import unimplemented
+from ..exc import unimplemented, Unsupported
 from ..source import (
     AttrSource,
     ConstantSource,
@@ -16,7 +16,7 @@ from ..source import (
     GetItemSource,
     GlobalSource,
 )
-from ..utils import make_cell
+from ..utils import make_cell, fake_tensor_exceptions
 from .base import typestr, VariableTracker
 
 
@@ -280,31 +280,53 @@ class UserMethodVariable(UserFunctionVariable):
     def call_function(
         self, tx, args: "List[VariableTracker]", kwargs: "Dict[str, VariableTracker]"
     ) -> "VariableTracker":
-        # For nn.Module methods, redirecting to NNModuleVariable.call_method for optimized solution
-        # rather than simple inlining. E.g, putting `call_method` op in FX graph for `forward` method
-        # since we ensure `forward` of allowed modules can be traced by AOT safely.
-        # Note this is not only for allowed modules, as user customized modules can extend from
-        # allowed modules but using parent's `forward` method, which is also covered by this branch.
+        module_attr = getattr(self.fn, "__module__", "")
 
-        # If we are tracing the higher order op, we want Dynamo to step inside
-        # the module call so that Dynamo can see the underlying parameters and
-        # buffers and raise them as inputs to the graph. The is_root_tracer
-        # check bypasses the if condition for non-root tracers and directly
-        # calls the super().call_function at the end, which is basically
-        # equivalent of inlining the method.
-        if tx.output.is_root_tracer() and isinstance(
-            self.obj, variables.NNModuleVariable
-        ):
-            module_attr = getattr(self.fn, "__module__", "")
-            if (
-                module_attr is not None
-                and module_attr.startswith("torch.nn.")
-                or self.is_constant
-            ):
-                return self.obj.call_method(
-                    tx, self.fn.__name__, args, kwargs, constant=self.is_constant
-                ).add_options(self)
-        return super().call_function(tx, args, kwargs)
+        def do_call_method():
+            return self.obj.call_method(
+                tx, self.fn.__name__, args, kwargs, constant=self.is_constant
+            ).add_options(self)
+        # Special case to ALWAYS do_call_method function is marked constant
+        # We error for some reason when we do super().call_function
+        if self.is_constant and isinstance(self.obj, variables.NNModuleVariable):
+            return do_call_method()
+
+        should_call_method = (
+            isinstance(self.obj, variables.NNModuleVariable)
+            and module_attr is not None
+            and module_attr.startswith("torch.nn.")
+            and tx.output.is_root_tracer()
+        )
+        # See Note [inline_nn_modules config and callback]
+        if torch._dynamo.config.inline_nn_modules:
+            try:
+                return super().call_function(tx, args, kwargs)
+            except Unsupported as e:
+                if (
+                    isinstance(e.__cause__, fake_tensor_exceptions)
+                    # We would've raised below anyway, but catch explicitly
+                    or torch._dynamo.config.disable_inline_nn_modules_fallback
+                ):
+                    raise
+                if should_call_method:
+                    return do_call_method()
+                raise
+        else:
+            # For nn.Module methods, redirecting to NNModuleVariable.call_method for optimized solution
+            # rather than simple inlining. E.g, putting `call_method` op in FX graph for `forward` method
+            # since we ensure `forward` of allowed modules can be traced by AOT safely.
+            # Note this is not only for allowed modules, as user customized modules can extend from
+            # allowed modules but using parent's `forward` method, which is also covered by this branch.
+            #
+            # If we are tracing the higher order op, we want Dynamo to step inside
+            # the module call so that Dynamo can see the underlying parameters and
+            # buffers and raise them as inputs to the graph. The is_root_tracer
+            # check bypasses the if condition for non-root tracers and directly
+            # calls the super().call_function at the end, which is basically
+            # equivalent of inlining the method.
+            if should_call_method:
+                return do_call_method()
+            return super().call_function(tx, args, kwargs)
 
     def num_parameters(self):
         return super().num_parameters() - 1

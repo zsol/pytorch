@@ -62,6 +62,26 @@ for namespace in MODULE_NAMESPACES:
 # Specifies the modes (i.e. train, eval) to test over.
 TrainEvalMode = Enum('TrainEvalMode', ('train_only', 'eval_only', 'train_and_eval'))
 
+def decorateForModules(decorator, module_classes, device_type=None, dtypes=None):
+    # This decorator doesn't modify fn in any way
+    def wrapped(fn, module_classes=module_classes, decorator=decorator,
+                device_type=device_type, dtypes=dtypes):
+        name_parts = fn.__qualname__.split('.')
+        assert len(name_parts) == 2, "Decorator only applies to a test function of a test class"
+        test_case_name, base_test_name = name_parts
+        for module_cls in module_classes:
+            matching_module_infos = [m for m in module_db if m.module_cls == module_cls]
+            assert len(matching_module_infos) == 1, f"Couldn't find single ModuleInfo for {module_cls}"
+            module_info = matching_module_infos[0]
+            decorators = list(module_info.decorators)
+            new_decorator = DecorateInfo(decorator,
+                                         test_case_name, base_test_name,
+                                         device_type=device_type,
+                                         dtypes=dtypes)
+            decorators.append(new_decorator)
+            module_info.decorators = tuple(decorators)
+        return fn
+    return wrapped
 
 class modules(_TestParametrizer):
     """ PROTOTYPE: Decorator for specifying a list of modules over which to run a test. """
@@ -2319,6 +2339,18 @@ module_db: List[ModuleInfo] = [
                        unittest.expectedFailure, 'TestEagerFusionModuleInfo',
                        'test_aot_autograd_module_exhaustive',
                        active_if=lambda p: p['training']
+                   ),
+                   # torch._subclasses.fake_tensor.DataDependentOutputException: aten._local_scalar_dense.default
+                   DecorateInfo(
+                       unittest.expectedFailure, 'TestDynamoInlineNNModules',
+                       'test_dynamo_inline_module',
+                       active_if=lambda p: p['training']
+                   ),
+                   # torch._subclasses.fake_tensor.DataDependentOutputException: aten._local_scalar_dense.default
+                   DecorateInfo(
+                       unittest.expectedFailure, 'TestDynamoInlineNNModulesNoFallback',
+                       'test_dynamo_inline_module_no_fallback',
+                       active_if=lambda p: p['training']
                    ))
                ),
     ModuleInfo(torch.nn.BatchNorm2d,
@@ -2340,6 +2372,18 @@ module_db: List[ModuleInfo] = [
                        unittest.expectedFailure, 'TestEagerFusionModuleInfo',
                        'test_aot_autograd_module_exhaustive',
                        active_if=lambda p: p['training']
+                   ),
+                   # torch._subclasses.fake_tensor.DataDependentOutputException: aten._local_scalar_dense.default
+                   DecorateInfo(
+                       unittest.expectedFailure, 'TestDynamoInlineNNModules',
+                       'test_dynamo_inline_module',
+                       active_if=lambda p: p['training']
+                   ),
+                   # torch._subclasses.fake_tensor.DataDependentOutputException: aten._local_scalar_dense.default
+                   DecorateInfo(
+                       unittest.expectedFailure, 'TestDynamoInlineNNModulesNoFallback',
+                       'test_dynamo_inline_module_no_fallback',
+                       active_if=lambda p: p['training']
                    ))
                ),
     ModuleInfo(torch.nn.BatchNorm3d,
@@ -2359,6 +2403,18 @@ module_db: List[ModuleInfo] = [
                    DecorateInfo(
                        unittest.expectedFailure, 'TestEagerFusionModuleInfo',
                        'test_aot_autograd_module_exhaustive',
+                       active_if=lambda p: p['training']
+                   ),
+                   # torch._subclasses.fake_tensor.DataDependentOutputException: aten._local_scalar_dense.default
+                   DecorateInfo(
+                       unittest.expectedFailure, 'TestDynamoInlineNNModules',
+                       'test_dynamo_inline_module',
+                       active_if=lambda p: p['training']
+                   ),
+                   # torch._subclasses.fake_tensor.DataDependentOutputException: aten._local_scalar_dense.default
+                   DecorateInfo(
+                       unittest.expectedFailure, 'TestDynamoInlineNNModulesNoFallback',
+                       'test_dynamo_inline_module_no_fallback',
                        active_if=lambda p: p['training']
                    ))
                ),
