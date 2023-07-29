@@ -927,6 +927,7 @@ class VariableBuilder:
             ignore_subclass=ignore_subclass,
             source=source,
         )
+
         self.tx.output.input_source_to_var[source] = tensor_variable
         assert "tensor_dict" not in tensor_proxy.node.meta
         tensor_proxy.node.meta["tensor_dict"] = value.__dict__.copy()
