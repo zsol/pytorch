@@ -109,6 +109,7 @@ class TestPatternMatcherBase(TestCase):
 
 
 class TestPatternMatcher(TestPatternMatcherBase):
+    @torch.testing._internal.common_utils.set_dynamo_inline_nn_modules(False)
     def test_conv2d_unary_cpu(self):
         class M(torch.nn.Module):
             def __init__(
@@ -150,6 +151,7 @@ class TestPatternMatcher(TestPatternMatcherBase):
                 match_nodes += 2
             self._test_common(mod, (v,), 2, match_nodes, check_autocast=check_autocast)
 
+    @torch.testing._internal.common_utils.set_dynamo_inline_nn_modules(False)
     def test_linear_unary(self):
         class M(torch.nn.Module):
             def __init__(
@@ -209,6 +211,7 @@ class TestPatternMatcher(TestPatternMatcherBase):
             matcher_nodes = 1
             self._test_common(mod, (v,), matcher_count, matcher_nodes)
 
+    @torch.testing._internal.common_utils.set_dynamo_inline_nn_modules(False)
     def test_conv_transpose2d_unary(self):
         class M(torch.nn.Module):
             def __init__(
@@ -246,6 +249,7 @@ class TestPatternMatcher(TestPatternMatcherBase):
                 match_nodes += 2
             self._test_common(mod, (v,), 2, match_nodes, check_autocast=check_autocast)
 
+    @torch.testing._internal.common_utils.set_dynamo_inline_nn_modules(False)
     def test_conv2d_binary(self):
         class M(torch.nn.Module):
             def __init__(
@@ -293,6 +297,7 @@ class TestPatternMatcher(TestPatternMatcherBase):
                 match_nodes += 1
             self._test_common(mod, (v,), match_count, match_nodes + 2)
 
+    @torch.testing._internal.common_utils.set_dynamo_inline_nn_modules(False)
     def test_linear_binary(self):
         class M(torch.nn.Module):
             def __init__(self, binary_fn, in_channels, out_channels, bias, **kwargs):
@@ -329,6 +334,7 @@ class TestPatternMatcher(TestPatternMatcherBase):
                 )
 
     # https://github.com/pytorch/pytorch/issues/99841.
+    @torch.testing._internal.common_utils.set_dynamo_inline_nn_modules(False)
     def test_hardtanh_pattern_fallback(self):
         class Model(torch.nn.Module):
             def __init__(self):
@@ -351,6 +357,7 @@ class TestPatternMatcher(TestPatternMatcherBase):
             mod = Model().eval()
             self._test_common(mod, (v, min_value, max_value), 2, 4)
 
+    @torch.testing._internal.common_utils.set_dynamo_inline_nn_modules(False)
     def test_leaky_relu_pattern_fallback(self):
         class Model(torch.nn.Module):
             def __init__(self):
@@ -371,6 +378,7 @@ class TestPatternMatcher(TestPatternMatcherBase):
                 self._test_common(mod, (v, negative_slope), 2, 5)
 
     # https://github.com/pytorch/pytorch/issues/99838.
+    @torch.testing._internal.common_utils.set_dynamo_inline_nn_modules(False)
     def test_conv2d_add_scalar(self):
         class Model(torch.nn.Module):
             def __init__(self):
@@ -389,6 +397,7 @@ class TestPatternMatcher(TestPatternMatcherBase):
             v = torch.randn(1, 3, 28, 28)
             self._test_common(mod, (v,), 1, 1)
 
+    @torch.testing._internal.common_utils.set_dynamo_inline_nn_modules(False)
     def test_conv2d_binary_inplace_fusion_pass_cpu(
         self, include_ops=None, exclude_ops=None
     ):
@@ -416,6 +425,7 @@ class TestPatternMatcher(TestPatternMatcherBase):
 
         self._test_code_common(mod, inputs, include_ops, exclude_ops)
 
+    @torch.testing._internal.common_utils.set_dynamo_inline_nn_modules(False)
     def test_conv2d_binary_inplace_fusion_failed_cpu(
         self, include_ops=None, exclude_ops=None
     ):
@@ -459,6 +469,7 @@ class TestPatternMatcher(TestPatternMatcherBase):
         for other, mod in zip(others, [mod_v1, mod_v2]):
             self._test_code_common(mod, (input, other), include_ops, exclude_ops)
 
+    @torch.testing._internal.common_utils.set_dynamo_inline_nn_modules(False)
     def test_conv2d_binary_fusion_failed(self):
         # we don't support alpha !=1 case or other has different size with conv's output.
         class Model(torch.nn.Module):
@@ -523,6 +534,7 @@ class TestPatternMatcher(TestPatternMatcherBase):
         mod = Model3().to(memory_format=torch.channels_last).eval()
         self._test_code_common(mod, (input,), include_ops, exclude_ops)
 
+    @torch.testing._internal.common_utils.set_dynamo_inline_nn_modules(False)
     def test_reproduce_99842_issue(self):
         class Model(torch.nn.Module):
             def __init__(self):

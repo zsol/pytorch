@@ -1045,6 +1045,7 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
                 qconfig_mapping,
             )
 
+    @torch.testing._internal.common_utils.set_dynamo_inline_nn_modules(False)
     def test_xnnpack_quantizer_conv_linear_no_permute(self):
         quantizer = XNNPACKQuantizer()
         operator_config = get_symmetric_quantization_config(is_per_channel=True)

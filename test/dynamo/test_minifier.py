@@ -114,6 +114,7 @@ inner(torch.randn(20, 20, requires_grad=True) + 1)
         )
 
     # Test that a module with mixed cpu/cuda parts with an error after dynamo can be repro'd
+    @torch.testing._internal.common_utils.set_dynamo_inline_nn_modules(False)
     @requires_cuda()
     def test_cpu_cuda_module_after_dynamo(self):
         backend_name = "relu_compile_error_TESTING_ONLY"
