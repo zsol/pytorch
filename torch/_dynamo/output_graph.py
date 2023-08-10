@@ -592,6 +592,7 @@ class OutputGraph(Checkpointable[OutputGraphState]):
         options["guards"] = set(options.get("guards", []))
         assert "source" in options
         source = options["source"]
+
         assert not isinstance(source, ParamBufferSource)
 
         if is_dynamic_nn_module(target) and getattr(

@@ -220,6 +220,11 @@ class VariableBuilder:
             TensorWithTFOverrideVariable,
             UserDefinedObjectVariable,
             NumpyNdarrayVariable,
+            UserDefinedObjectVariable,
+            FSDPManagedNNModuleVariable,
+            UserDefinedClassVariable,
+            NumpyNdarrayVariable,
+            DeviceMeshVariable,
         ]:
             return True
         return False
@@ -564,18 +569,26 @@ class VariableBuilder:
                 guards=make_guards(GuardBuilder.FUNCTION_MATCH),
             )
         elif isinstance(value, torch.cuda.streams.Stream):
-            unimplemented("CUDAStreamVariable does not currently work soundly.")
-            # return CUDAStreamVariable(
-            #     None,
-            #     value,
-            #     source=self.source,
-            #     guards=self.make_guards(GuardBuilder.ID_MATCH),
-            # )
+            return CUDAStreamVariable(
+                None,
+                value,
+                value.device,
+                source=self.source,
+                guards=self.make_guards(GuardBuilder.ID_MATCH),
+            )
         elif (
             isinstance(value, torch._C._TensorMeta)
             and value in config.traceable_tensor_subclasses
         ):
             return TensorSubclassVariable(value, source=self.source)
+        elif issubclass(type(value), type):
+            # TODO(whc) the following seems preferable but breaks some tests, debug
+            # elif inspect.isclass(value):
+            return UserDefinedClassVariable(
+                value,
+                source=self.source,
+                guards=make_guards(GuardBuilder.FUNCTION_MATCH),
+            )
         elif isinstance(value, types.MethodType) and isinstance(
             value.__self__, torch.nn.Module
         ):
@@ -637,14 +650,6 @@ class VariableBuilder:
                 value,
                 source=self.source,
                 guards=make_guards(GuardBuilder.ID_MATCH),
-            )
-        elif issubclass(type(value), type):
-            # TODO(whc) the following seems preferable but breaks some tests, debug
-            # elif inspect.isclass(value):
-            return UserDefinedClassVariable(
-                value,
-                source=self.source,
-                guards=make_guards(GuardBuilder.FUNCTION_MATCH),
             )
         else:
             result = UserDefinedObjectVariable(
@@ -751,7 +756,9 @@ class VariableBuilder:
             and not config.allow_rnn
         ):
             unimplemented("TorchDynamo purposely graph breaks on RNN, GRU, LSTMs")
-        if mutation_guard.is_dynamic_nn_module(value):
+        if mutation_guard.is_dynamic_nn_module(value) and not getattr(
+            value, "_is_fsdp_managed_module", False
+        ):
             # created dynamically, don't specialize on it
             result = UnspecializedNNModuleVariable(
                 value, guards=self.make_guards(GuardBuilder.TYPE_MATCH)
@@ -1356,7 +1363,7 @@ def wrap_fx_proxy_cls(
         return SymNodeVariable(proxy, example_value, **options)
     elif proxy.node.target in [torch.cuda.streams.Stream, torch.cuda.current_stream]:
         proxy.node.meta["example_value"] = example_value
-        return CUDAStreamVariable(proxy, example_value, **options)
+        return CUDAStreamVariable(proxy, example_value, example_value.device, **options)
     elif isinstance(example_value, int) and proxy.node.target in [
         torch.sym_int,
         getattr,
@@ -1370,13 +1377,16 @@ def wrap_fx_proxy_cls(
         # This always wants to be in the graph, even if the constraint
         # results in a constant int
         torch._export.constraints.constrain_as_value,
+        torch.initial_seed,
     ]:
         proxy.node.meta["example_value"] = example_value
+        return ConstantVariable(example_value, **options)
+    elif isinstance(example_value, int):
         return ConstantVariable(example_value, **options)
     else:
         unimplemented(
             "torch.* op returned non-Tensor "
-            + f"{typestr(example_value)} {proxy.node.op} {proxy.node.target}"
+            + f"{typestr(example_value)}  {proxy.node.op} {proxy.node.target}"
         )
 
 
