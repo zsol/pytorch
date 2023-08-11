@@ -35,7 +35,7 @@ import torch._inductor.test_operators
 import torch.distributed
 import torch.utils._content_store
 
-from . import comptime, config, external_utils
+from . import comptime, external_utils
 
 """
 A note on skipfiles:
@@ -234,13 +234,6 @@ for _name in (
     add(_name)
 
 _recompile_re()
-
-
-def is_torch_inline_allowed(filename):
-    return any(
-        filename.startswith(_module_dir(mod))
-        for mod in config.skipfiles_inline_module_allowlist
-    )
 
 
 @functools.lru_cache(None)
