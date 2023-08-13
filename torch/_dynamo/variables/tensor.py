@@ -5,12 +5,12 @@ from typing import Dict, List
 
 import numpy as np
 
-import sympy
-
 import torch._numpy as tnp
 
 import torch.fx
 import torch.random
+
+import torch.utils._sympy.cached_sympy as sympy
 
 from torch.fx.experimental.symbolic_shapes import free_symbols, guard_scalar, SymTypes
 

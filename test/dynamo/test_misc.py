@@ -20,13 +20,17 @@ import weakref
 from unittest.mock import patch
 
 import numpy as np
+<<<<<<< HEAD
 import pytest
 import sympy
+=======
+>>>>>>> 33e1639dc0e ([wip] Add cached_sympy layer)
 import torch
 
 import torch._dynamo.test_case
 import torch._dynamo.testing
 import torch.onnx.operators
+import torch.utils._sympy.cached_sympy as sympy
 from torch._C import FileCheck
 from torch._dynamo import allow_in_graph, bytecode_analysis, bytecode_transformation
 from torch._dynamo.eval_frame import _debug_get_cache_entry_list

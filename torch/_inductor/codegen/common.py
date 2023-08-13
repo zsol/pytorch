@@ -8,11 +8,12 @@ from collections import namedtuple
 from itertools import chain
 from typing import Any, Callable, ClassVar, Dict, List, NamedTuple, Optional, Set, Union
 
-import sympy
 from sympy.printing.printer import Printer
 
 import torch
 import torch.fx
+
+import torch.utils._sympy.cached_sympy as sympy
 from torch.utils._sympy.value_ranges import ValueRanges
 
 from .. import metrics

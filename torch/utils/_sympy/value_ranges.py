@@ -1,7 +1,7 @@
 import dataclasses
 import itertools
-import sympy
-from sympy.logic.boolalg import BooleanAtom, Boolean as SympyBoolean
+import torch.utils._sympy.cached_sympy as sympy
+from torch.utils._sympy.cached_sympy import BooleanAtom, Boolean as SympyBoolean
 import operator
 import math
 import logging
@@ -382,7 +382,7 @@ class SymPyValueRangeAnalysis:
 
     @staticmethod
     def exp(x):
-        return ValueRanges.increasing_map(x, sympy.functions.elementary.exponential.exp)
+        return ValueRanges.increasing_map(x, sympy.exp)
 
     @staticmethod
     def log(x):
@@ -421,11 +421,11 @@ class SymPyValueRangeAnalysis:
 
     @classmethod
     def floor(cls, x):
-        return ValueRanges.increasing_map(x, sympy.functions.elementary.integers.floor)
+        return ValueRanges.increasing_map(x, sympy.floor)
 
     @classmethod
     def ceil(cls, x):
-        return ValueRanges.increasing_map(x, sympy.functions.elementary.integers.ceiling)
+        return ValueRanges.increasing_map(x, sympy.ceiling)
 
     # It's used in some models on symints
     @staticmethod

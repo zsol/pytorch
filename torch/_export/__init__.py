@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from unittest.mock import patch
 
-import sympy
+import torch.utils._sympy.cached_sympy as sympy
 
 import torch
 import torch._dynamo
