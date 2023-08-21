@@ -25,7 +25,8 @@ from torch.testing._internal.common_device_type import (
     onlyCPU,
     OpDTypes,
 )
-from torch.testing._internal.common_methods_invocations import op_db
+from torch.testing._internal.common_methods_invocations import (
+    op_db, foreach_unary_op_db, foreach_binary_op_db, foreach_pointwise_op_db, foreach_reduce_op_db, foreach_lerp_op_db)
 from torchgen.yaml_utils import YamlLoader
 from torchgen.model import OperatorName
 
@@ -52,6 +53,15 @@ i32 = torch.int32
 i64 = torch.int64
 b8 = torch.bool
 u8 = torch.uint8
+
+
+# XXX: not used in all meta tests yet
+foreach_op_db =\
+    foreach_unary_op_db +\
+    foreach_binary_op_db +\
+    foreach_pointwise_op_db +\
+    foreach_reduce_op_db +\
+    foreach_lerp_op_db
 
 
 class TestMetaConverter(TestCase):
@@ -505,7 +515,8 @@ def run_meta_crossref(
         # they're not tested outside of gradcheck which only checks
         # torch.float64 and torch.complex128 (which this second one
         # often skipped as well).
-        raise unittest.SkipTest("Original OpInfo is broken") from e
+        raise Exception("OpInfo broken: " + str(e))
+        # raise unittest.SkipTest("Original OpInfo is broken") from e
 
 
     # TODO: also handle cases where func raise an exception
@@ -636,9 +647,15 @@ meta_function_expected_failures = {
     torch.linalg.lstsq : {f64, f32, c128, c64},
 }
 
+from torch.testing._internal.opinfo.core import _foreach_zero
+
 meta_function_expected_failures_only_outplace = {
     torch.nn.functional.rrelu : {f64, bf16, f32},
 }
+
+meta_function_early_skips_only_outplace = set({
+    _foreach_zero,  # not implemented
+})
 
 meta_function_expected_failures_conditional = {
     torch.repeat_interleave : (lambda dtype, *args, **kwargs: not isinstance(kwargs.get("repeats", None), int)),
@@ -836,6 +853,10 @@ meta_dispatch_early_skips = set({
     torch.Tensor.cumsum_,
 })
 
+meta_dispatch_early_skips_only_outplace = set({
+    _foreach_zero,  # not implemented
+})
+
 meta_inplace_skips = set({
     # Errors out in one of the tests, while ProxyTensor passes...
     torch.Tensor.cumprod_,
@@ -980,6 +1001,19 @@ class MetaCrossRefDispatchMode(torch.utils._python_dispatch.TorchDispatchMode):
             run_symbolic_meta=self.symbolic_meta,
         )
 
+def _handle_foreach_kwargs(func, args, kwargs):
+    if 'zero_size' in kwargs:
+        kwargs.pop('zero_size')
+    if 'disable_fastpath' in kwargs:
+        kwargs.pop('disable_fastpath')
+    if func in (torch._foreach_addcmul, torch._foreach_addcmul_, torch._foreach_addcdiv, torch._foreach_addcdiv_):
+        if 'values' in kwargs:
+            values = kwargs.pop("values")
+            if values is not None:
+                args = list(args)
+                args.append(values)
+    return args, kwargs
+
 # NB: we're running these tests only on CUDA because there are some
 # inconsistencies between CUDA and CPU, and running on CUDA makes it easier
 # to ignore the CPU case when inconsistencies arise.  Ideally we deal
@@ -990,23 +1024,31 @@ class TestMeta(TestCase):
     def _get_safe_inplace(self, inplace_variant):
         @wraps(inplace_variant)
         def _fn(t, *args, **kwargs):
-            return inplace_variant(t.clone(), *args, **kwargs)
+            if isinstance(t, list):
+                return inplace_variant([x.clone() for x in t], *args, **kwargs)
+            else:
+                return inplace_variant(t.clone(), *args, **kwargs)
 
         return _fn
 
     @unittest.skipIf(TEST_WITH_ASAN, "Skipped under ASAN")
     @skipIfCrossRef
     @suppress_warnings
-    @ops(op_db)
+    @ops(itertools.chain(op_db, foreach_op_db))
     def test_meta_outplace(self, device, dtype, op):
         # run the OpInfo sample inputs, cross-referencing them with the
         # meta implementation and check the results are the same.  All
         # the heavy lifting happens in MetaCrossRefFunctionMode
         func = op.get_op()
+
+        if func in meta_function_early_skips_only_outplace:
+            self.skipTest("Function is in early skips (outplace)")
+
         samples = op.sample_inputs(device, dtype, requires_grad=False)
         for sample_input in samples:
             args = [sample_input.input] + list(sample_input.args)
             kwargs = sample_input.kwargs
+            args, kwargs = _handle_foreach_kwargs(func, args, kwargs)
             with MetaCrossRefFunctionMode(self, dtype=dtype, device=device, inplace=False):
                 expected = func(*args, **kwargs)
                 if isinstance(expected, torch.Tensor) and op.supports_out:
@@ -1033,17 +1075,17 @@ class TestMeta(TestCase):
                     self.assertEqual(ref, meta)
 
 
-
     @unittest.skipIf(TEST_WITH_ASAN, "Skipped under ASAN")
     @skipIfCrossRef
     @suppress_warnings
-    @ops(op_db)
+    @ops(itertools.chain(op_db, foreach_op_db))
     def test_meta_inplace(self, device, dtype, op):
         func = op.get_inplace()
         if not func:
             self.skipTest("No inplace variable for this op")
         if func in meta_inplace_skips:
             self.skipTest("Skipped")
+        orig_func = func
         func = self._get_safe_inplace(func)
         samples = op.sample_inputs(device, dtype, requires_grad=False)
         for sample_input in samples:
@@ -1051,6 +1093,7 @@ class TestMeta(TestCase):
                 continue
             args = [sample_input.input] + list(sample_input.args)
             kwargs = sample_input.kwargs
+            args, kwargs = _handle_foreach_kwargs(orig_func, args, kwargs)
             with MetaCrossRefFunctionMode(self, dtype=dtype, device=device, inplace=True):
                 expected = func(*args, **kwargs)
 
@@ -1065,6 +1108,10 @@ class TestMeta(TestCase):
         if func in meta_dispatch_early_skips:
             self.skipTest("Function is in dispatch early skips")
 
+        if not inplace and func in meta_dispatch_early_skips_only_outplace:
+            self.skipTest("Function is in dispatch early skips (outplace)")
+
+        orig_func = func
         if inplace:
             func = self._get_safe_inplace(func)
 
@@ -1083,6 +1130,7 @@ class TestMeta(TestCase):
                 strided_args = [sample_args]
 
             for args in strided_args:
+                args, kwargs = _handle_foreach_kwargs(orig_func, args, kwargs)
                 with MetaCrossRefDispatchMode.push(self, dtype=dtype, device=device, symbolic_meta=symbolic_meta):
                     expected = func(*args, **kwargs)
 
@@ -1093,7 +1141,7 @@ class TestMeta(TestCase):
     @unittest.skipIf(TEST_WITH_ASAN, "Skipped under ASAN")
     @skipIfCrossRef
     @suppress_warnings
-    @ops(op_db)
+    @ops(itertools.chain(op_db, foreach_op_db))
     def test_dispatch_meta_outplace(self, device, dtype, op):
         self._run_dispatch_meta_test(device, dtype, op, symbolic_meta=False, inplace=False)
 
@@ -1101,14 +1149,14 @@ class TestMeta(TestCase):
     @unittest.skipIf(TEST_WITH_ASAN, "Skipped under ASAN")
     @skipIfCrossRef
     @suppress_warnings
-    @ops(op_db)
+    @ops(itertools.chain(op_db, foreach_op_db))
     def test_dispatch_meta_inplace(self, device, dtype, op):
         self._run_dispatch_meta_test(device, dtype, op, symbolic_meta=False, inplace=True)
 
     @unittest.skipIf(TEST_WITH_ASAN, "Skipped under ASAN")
     @skipIfCrossRef
     @suppress_warnings
-    @ops(op_db)
+    @ops(itertools.chain(op_db, foreach_op_db))
     def test_dispatch_symbolic_meta_outplace(self, device, dtype, op):
         self._run_dispatch_meta_test(device, dtype, op, symbolic_meta=True, inplace=False)
 
@@ -1116,7 +1164,7 @@ class TestMeta(TestCase):
     @unittest.skipIf(TEST_WITH_ASAN, "Skipped under ASAN")
     @skipIfCrossRef
     @suppress_warnings
-    @ops(op_db)
+    @ops(itertools.chain(op_db, foreach_op_db))
     def test_dispatch_symbolic_meta_inplace(self, device, dtype, op):
         self._run_dispatch_meta_test(device, dtype, op, symbolic_meta=True, inplace=True)
 
@@ -1124,7 +1172,7 @@ class TestMeta(TestCase):
     @skipIfCrossRef
     @suppress_warnings
     # only test one dtype, as output stride behavior is the same for all dtypes
-    @ops(op_db, dtypes=OpDTypes.any_common_cpu_cuda_one)
+    @ops(itertools.chain(op_db, foreach_op_db), dtypes=OpDTypes.any_common_cpu_cuda_one)
     # Only test on CUDA, as CUDA kernel's stride is the reference
     @onlyCUDA
     def test_dispatch_symbolic_meta_outplace_all_strides(self, device, dtype, op):
@@ -1134,7 +1182,7 @@ class TestMeta(TestCase):
     @skipIfCrossRef
     @suppress_warnings
     # only test one dtype, as output stride behavior is the same for all dtypes
-    @ops(op_db, dtypes=OpDTypes.any_common_cpu_cuda_one)
+    @ops(itertools.chain(op_db, foreach_op_db), dtypes=OpDTypes.any_common_cpu_cuda_one)
     # Only test on CUDA, as CUDA kernel's stride is the reference
     @onlyCUDA
     def test_dispatch_symbolic_meta_inplace_all_strides(self, device, dtype, op):
