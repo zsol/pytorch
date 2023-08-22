@@ -106,6 +106,18 @@ def out_dtype_dense(
     output_dtype: torch.dtype,
     *args
 ):
+    if (
+        len(args)==2 and
+        isinstance(args[0], torch.Tensor) and
+        isinstance(args[1], torch.Tensor) and
+        args[0].dtype == torch.int8 and
+        args[1].dtype == torch.int8 and
+        args[0].is_cuda and
+        args[1].is_cuda and
+        op == torch.ops.aten.mm.default and
+        output_dtype == torch.int32
+    ):
+        return torch._int_mm(*args)
     flat_inputs = pytree.tree_flatten(args)[0] + [torch.ones(1, dtype=output_dtype)]
     promote_dtype: torch.dtype = elementwise_dtypes(
         *flat_inputs,
