@@ -326,7 +326,7 @@ def get_path(basename: str, extension: str, specified_dir: str = ""):
     return basename, subdir, path
 
 
-def get_hash(content: Union[str, bytes], extra: str = "", hash_type: str ="code"):
+def get_hash(content: Union[str, bytes], extra: str = "", hash_type: str = "code"):
     assert hash_type in ["code", "cubin", "hsaco"], "Hash type not supported"
     if hash_type == "code":
         return code_hash(content, extra)
@@ -953,7 +953,7 @@ class CudaKernelParamCache:
             hash_type=bin_type,
             specified_dir=config.aot_inductor_output_path,
         )
-        
+
         if torch.version.hip is None:
             params["cubin_path"] = path
         else:
