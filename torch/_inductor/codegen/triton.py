@@ -1376,7 +1376,8 @@ class TritonKernel(Kernel):
             self.stores.writeline(DeferredLine(name, "tl.debug_barrier()"))
 
         if mode is None:
-            line = f"tl.store({var} + ({index}), {value}, {mask})"
+            # cache_modifier='.cs', as we never reload after a store
+            line = f"tl.store({var} + ({index}), {value}, {mask}, cache_modifier='.cs')"
         elif mode == "atomic_add":
             line = f"tl.atomic_add({var} + ({index}), {value}, {mask})"
         else:
