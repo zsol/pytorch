@@ -33,7 +33,7 @@ TORCH_LIBRARY(c10d, m) {
   m.def(
       "reduce_scatter_(Tensor[] output_tensors, Tensor[][] input_tensors, __torch__.torch.classes.c10d.ProcessGroup process_group, __torch__.torch.classes.c10d.ReduceOp reduce_op, int timeout) -> (Tensor[], __torch__.torch.classes.c10d.Work)");
   m.def(
-      "_reduce_scatter_base_(Tensor output_tensor, Tensor input_tensor, __torch__.torch.classes.c10d.ProcessGroup process_group, __torch__.torch.classes.c10d.ReduceOp reduce_op, int timeout) -> (Tensor, __torch__.torch.classes.c10d.Work)");
+      "_reduce_scatter_base_(Tensor output_tensor, Tensor input_tensor, __torch__.torch.classes.c10d.ProcessGroup process_group, __torch__.torch.classes.c10d.ReduceOp reduce_op, int timeout, bool record_stream) -> (Tensor, __torch__.torch.classes.c10d.Work)");
   m.def(
       "reduce_scatter_tensor_coalesced_(Tensor[] outputs, Tensor[] inputs, __torch__.torch.classes.c10d.ProcessGroup process_group, __torch__.torch.classes.c10d.ReduceOp reduce_op, int timeout) -> __torch__.torch.classes.c10d.Work");
   m.def(
@@ -307,14 +307,14 @@ IMPL_REDUCE_SCATTER(PrivateUse1)
       at::Tensor& input_tensor,                                                \
       const c10::intrusive_ptr<ProcessGroup>& process_group,                   \
       const c10::intrusive_ptr<ReduceOp>& reduce_op,                           \
-      int64_t timeout) {                                                       \
-    auto work =                                                                \
-        process_group->getBackend(c10::DeviceType::DEV)                        \
-            ->_reduce_scatter_base(                                            \
-                output_tensor,                                                 \
-                input_tensor,                                                  \
-                ReduceScatterOptions{                                          \
-                    *reduce_op.get(), std::chrono::milliseconds(timeout)});    \
+      int64_t timeout,                                                         \
+      bool record_stream) {                                                    \
+    ReduceScatterOptions opts = ReduceScatterOptions(                          \
+        {*reduce_op.get(),                                                     \
+         std::chrono::milliseconds(timeout),                                   \
+         record_stream});                                                      \
+    auto work = process_group->getBackend(c10::DeviceType::DEV)                \
+                    ->_reduce_scatter_base(output_tensor, input_tensor, opts); \
     return std::tuple<at::Tensor, c10::intrusive_ptr<Work>>(                   \
         output_tensor, work);                                                  \
   }
