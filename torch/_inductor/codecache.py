@@ -951,7 +951,7 @@ class CudaKernelParamCache:
             cubin,
             bin_type,
             hash_type=bin_type,
-            specified_dir=config.aot_inductor_output_path,
+            specified_dir=config.aot_inductor.output_path,
         )
 
         if torch.version.hip is None:
