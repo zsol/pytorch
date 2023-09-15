@@ -243,7 +243,6 @@ inductor_expected_failures_single_sample["cuda"] = {
     "fft.ihfftn": {f16, f32, f64},
     "geometric": {f16},
     "linalg.eig": {f32, f64},
-    "log_normal": {f16},
     "masked_scatter": {f16, f32, f64},
     ("max", "reduction_with_dim"): {b8},
     ("min", "reduction_with_dim"): {b8},
