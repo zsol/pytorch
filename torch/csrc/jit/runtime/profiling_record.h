@@ -4,13 +4,10 @@
 #include <ATen/core/ivalue.h>
 #include <ATen/core/jit_type.h>
 #include <ATen/core/stack.h>
-#include <torch/csrc/Export.h>
+#include <c10/macros/Export.h>
 #include <torch/csrc/jit/ir/ir.h>
 
-#include <list>
 #include <map>
-#include <unordered_map>
-#include <vector>
 
 // We would like to assign each position/axis of a tensor an abstract size
 // * For each `tensor` we have a profiled `Value` of a `TensorType` describing
@@ -83,8 +80,6 @@ using ::c10::TensorTypePtr;
 using Dimension = int64_t;
 
 TORCH_API void RegisterProfilingNode(const std::function<bool(const Node*)>&);
-
-struct ProfilingRecord;
 
 // `SetPartitioningHelper` is used to maintain the following invariant:
 // For **every** profiling run, *the same `ShapeSymbol` is always associated

@@ -2,7 +2,6 @@
 
 #include <torch/csrc/autograd/profiler.h>
 #include <torch/csrc/distributed/rpc/message.h>
-#include <torch/csrc/distributed/rpc/rpc_agent.h>
 #include <torch/csrc/distributed/rpc/rpc_command_base.h>
 #include <torch/csrc/distributed/rpc/types.h>
 

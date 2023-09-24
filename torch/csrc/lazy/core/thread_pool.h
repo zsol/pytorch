@@ -7,7 +7,6 @@
 
 #include <functional>
 #include <memory>
-#include <thread>
 
 #include <c10/macros/Export.h>
 

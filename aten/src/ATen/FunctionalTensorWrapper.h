@@ -9,7 +9,7 @@
 #include <ATen/core/boxing/impl/boxing.h>
 #include <ATen/core/dispatch/Dispatcher.h>
 
-#include <c10/core/DispatchKey.h>
+#include <c10/core/DispatchKeySet.h>
 
 namespace at {
 

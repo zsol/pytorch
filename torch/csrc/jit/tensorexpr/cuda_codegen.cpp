@@ -4,6 +4,7 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAGeneratorImpl.h>
 #include <ATen/native/cuda/jit_utils.h>
+#include <ATen/ops/empty_strided_native.h>
 #include <c10/cuda/CUDAFunctions.h>
 #include <c10/util/irange.h>
 #include <torch/csrc/jit/codegen/fuser/cuda/fused_kernel.h>

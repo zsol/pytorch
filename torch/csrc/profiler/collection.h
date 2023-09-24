@@ -97,8 +97,6 @@ using op_input_t = c10::variant<
 template <EventType>
 struct ExtraFields;
 
-struct Result;
-
 struct TorchOpBasicFields {
   int64_t sequence_number_{0};
   uint64_t forward_tid_{0};

@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include <c10/macros/Macros.h>
+#include <c10/macros/Export.h>
 
 #include <torch/csrc/monitor/events.h>
 

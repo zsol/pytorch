@@ -8,9 +8,6 @@
 #include <torch/csrc/jit/tensorexpr/exceptions.h>
 #include <torch/csrc/jit/tensorexpr/expr.h>
 #include <torch/csrc/jit/tensorexpr/fwd_decls.h>
-#include <torch/csrc/jit/tensorexpr/stmt.h>
-
-#include <ATen/core/ivalue.h>
 
 namespace torch {
 namespace jit {
