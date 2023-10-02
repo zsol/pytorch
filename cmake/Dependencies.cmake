@@ -1357,6 +1357,7 @@ endif()
 
 if(USE_DISTRIBUTED AND USE_TENSORPIPE)
   if(MSVC)
+    set(USE_TENSORPIPE OFF CACHE BOOL "" FORCE)
     message(WARNING "Tensorpipe cannot be used on Windows.")
   else()
     if(USE_CUDA)
@@ -1364,15 +1365,12 @@ if(USE_DISTRIBUTED AND USE_TENSORPIPE)
       set(TP_ENABLE_CUDA_IPC ON CACHE BOOL "" FORCE)
     endif()
     set(TP_BUILD_LIBUV ON CACHE BOOL "" FORCE)
-    add_compile_options(-DTORCH_USE_LIBUV)
-    include_directories(BEFORE SYSTEM ${CMAKE_CURRENT_LIST_DIR}/../third_party/tensorpipe/third_party/libuv/include)
     set(TP_STATIC_OR_SHARED STATIC CACHE STRING "" FORCE)
 
     # Tensorpipe uses cuda_add_library
     torch_update_find_cuda_flags()
     add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/tensorpipe)
 
-    list(APPEND Caffe2_DEPENDENCY_LIBS tensorpipe)
     if(USE_CUDA)
       list(APPEND Caffe2_CUDA_DEPENDENCY_LIBS tensorpipe_cuda)
     elseif(USE_ROCM)
