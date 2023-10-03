@@ -16,7 +16,7 @@ target_include_directories(shm PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   )
 
-target_link_libraries(shm torch c10)
+target_link_libraries(shm c10)
 
 
 install(TARGETS shm DESTINATION "${LIBSHM_INSTALL_LIB_SUBDIR}")
