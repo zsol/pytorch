@@ -36,6 +36,11 @@ from ..utils import decode_device
 from ..virtualized import V
 from .group_batch_fusion import group_batch_fusion_post_grad_passes
 
+IS_FBSOURCE = True
+try:
+    from torch._inductor.fb.utils import print_graph  # noqa: F401
+except ImportError:
+    IS_FBSOURCE = False
 
 log = logging.getLogger(__name__)
 aten = torch.ops.aten
@@ -93,13 +98,8 @@ def post_grad_passes(gm: torch.fx.GraphModule, is_inference: bool):
     gm.recompile()
     gm.graph.lint()
 
-    if config.is_fbcode():
-        from torch._inductor.fb.utils import get_everpaste_url  # type: ignore[import]
-
-        log.info(
-            "Print graph after recompile in post grad passes: %s",
-            get_everpaste_url(str(gm.graph)),
-        )
+    if IS_FBSOURCE:
+        print_graph(gm.graph, "Print graph after recompile in post grad passes.")
 
 
 @init_once_fakemode
