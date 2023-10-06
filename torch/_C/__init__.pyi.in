@@ -1911,6 +1911,10 @@ class DeviceObjType(JitType):
     @staticmethod
     def get() -> DeviceObjType: ...
 
+class GeneratorType(JitType):
+    @staticmethod
+    def get() -> GeneratorType: ...
+
 class StreamObjType(JitType):
     @staticmethod
     def get() -> StreamObjType: ...
