@@ -903,7 +903,7 @@ static inline DispatchKey legacyExtractDispatchKey(DispatchKeySet s) {
 }
 
 template <class T>
-using is_not_DispatchKeySet = guts::negation<std::is_same<DispatchKeySet, T>>;
+using is_not_DispatchKeySet = std::negation<std::is_same<DispatchKeySet, T>>;
 
 // Given a function type, constructs a function_traits type that drops the first
 // parameter type if the first parameter is of type DispatchKeySet. NB:

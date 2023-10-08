@@ -71,7 +71,7 @@ namespace c10d {
 namespace {
 
 template <typename F>
-typename c10::invoke_result_t<F> syscall(F fn) {
+auto syscall(F fn) {
   while (true) {
     auto rv = fn();
     if (rv == -1) {

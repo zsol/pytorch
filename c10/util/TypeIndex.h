@@ -6,6 +6,7 @@
 #include <c10/util/string_view.h>
 #include <cinttypes>
 #include <functional>
+#include <iostream>
 
 namespace c10 {
 namespace util {

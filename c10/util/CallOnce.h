@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <mutex>
 #include <utility>
 
@@ -47,7 +48,7 @@ class once_flag {
     if (init_.load(std::memory_order_relaxed)) {
       return;
     }
-    c10::guts::invoke(f, std::forward<Args>(args)...);
+    std::invoke(f, std::forward<Args>(args)...);
     init_.store(true, std::memory_order_release);
   }
 
