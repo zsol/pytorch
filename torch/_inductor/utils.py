@@ -45,6 +45,7 @@ from torch.utils._sympy.functions import CeilDiv, CleanDiv, FloorDiv, ModularInd
 from . import config
 
 log = logging.getLogger(__name__)
+log.setLevel(logging.DEBUG)
 
 _T = TypeVar("_T")
 VarRanges = Dict[sympy.Expr, sympy.Expr]
