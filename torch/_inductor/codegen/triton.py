@@ -193,10 +193,16 @@ class TritonOverrides(OpOverrides):
             # Both dtype and src_dtype are set. This is used by torch to(dtype=dtype).
             # It takes the maximum min_elem_per_thread if there are multiple fp8 conversions
             # in the same kernel.
-            V.kernel.min_elem_per_thread = max(
-                _get_min_elements_per_thread(src_dtype, dtype),
-                V.kernel.min_elem_per_thread,
-            )
+            min_elem_per_thread = _get_min_elements_per_thread(src_dtype, dtype)
+            if V.kernel.inside_reduction:
+                V.kernel.min_elem_per_thread_reduction_block = max(
+                    min_elem_per_thread, V.kernel.min_elem_per_thread_reduction_block
+                )
+            else:
+                V.kernel.min_elem_per_thread_non_reduction_block = max(
+                    min_elem_per_thread,
+                    V.kernel.min_elem_per_thread_non_reduction_block,
+                )
 
         if dtype == torch.bool:
             return f"({x} != 0)"
@@ -812,7 +818,6 @@ class TritonKernel(Kernel):
         mutations=None,
         pid_cache=None,
         reduction_hint=ReductionHint.DEFAULT,
-        min_elem_per_thread=0,
     ):
         if pid_cache is None:
             pid_cache = {}
@@ -830,18 +835,20 @@ class TritonKernel(Kernel):
         self.outside_loop_vars = set()
         self.reduction_hint = reduction_hint
         self.index_dtype = index_dtype
-        self.min_elem_per_thread = min_elem_per_thread
+        self.min_elem_per_thread_reduction_block = 0
+        self.min_elem_per_thread_non_reduction_block = 0
         # Upper bounds for indirect_indexing and their str representation
         self.indirect_max_sizes: Dict[Tuple[str, str], Tuple[sympy.Expr, str]] = {}
         self.last_usage = set()
 
         self.persistent_reduction = self.should_use_persistent_reduction()
-        self.no_x_dim = (
-            self.reduction_hint == ReductionHint.INNER
-            and self.persistent_reduction
-            and len(self.numels) == 2
-            and self.numels[-1] >= 256
-        )
+        # self.no_x_dim = (
+        #     self.reduction_hint == ReductionHint.INNER
+        #     and self.persistent_reduction
+        #     and len(self.numels) == 2
+        #     and self.numels[-1] >= 256
+        # )
+        self.no_x_dim = False
         self.initialize_range_tree(pid_cache)
 
         # A set of autotuning hints to pass as part of triton_meta
@@ -2032,7 +2039,9 @@ class TritonKernel(Kernel):
                     size_hints={size_hints!r},
                     reduction_hint={reduction_hint},
                     filename=__file__,
-                    meta={triton_meta!r}
+                    meta={triton_meta!r},
+                    min_elem_per_thread_reduction_block={self.min_elem_per_thread_reduction_block},
+                    min_elem_per_thread_non_reduction_block={self.min_elem_per_thread_non_reduction_block}
                 )
                 @triton.jit
             """
@@ -2048,7 +2057,8 @@ class TritonKernel(Kernel):
                     size_hints={size_hints!r}, {tile_hint}
                     filename=__file__,
                     meta={triton_meta!r},
-                    min_elem_per_thread={self.min_elem_per_thread}
+                    min_elem_per_thread_reduction_block={self.min_elem_per_thread_reduction_block},
+                    min_elem_per_thread_non_reduction_block={self.min_elem_per_thread_non_reduction_block}
                 )
                 @triton.jit
             """
