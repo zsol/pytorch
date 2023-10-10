@@ -57,6 +57,7 @@ from .utils import (
     CleanupManager,
     CompilationMetrics,
     counters,
+    cprofile_wrapper,
     dynamo_timed,
     format_bytecode,
     frame_phase_timing,
@@ -129,6 +130,7 @@ def wrap_convert_context(fn):
         guards = GlobalStateGuard()
         prior_grad_mode = torch.is_grad_enabled()
         prior_deterministic = torch.are_deterministic_algorithms_enabled()
+        prior_warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
         py_rng_state = random.getstate()
         torch_rng_state = torch.random.get_rng_state()
         if torch.cuda.is_available():
@@ -141,7 +143,9 @@ def wrap_convert_context(fn):
         finally:
             cleanup.close()
             torch._C._set_grad_enabled(prior_grad_mode)
-            torch.use_deterministic_algorithms(prior_deterministic)
+            torch.use_deterministic_algorithms(
+                prior_deterministic, warn_only=prior_warn_only
+            )
             random.setstate(py_rng_state)
             torch.random.set_rng_state(torch_rng_state)
             if torch.cuda.is_available():
@@ -177,7 +181,9 @@ def has_tensor_in_frame(frame):
             return seen_ids[obj_id]
         seen_ids[obj_id] = False
 
-        if isinstance(obj, (torch.Tensor, torch.nn.Module)):
+        if isinstance(obj, (torch.Tensor, torch.nn.Module)) or (
+            istype(obj, type) and issubclass(obj, torch.nn.Module)
+        ):
             seen_ids[obj_id] = True
             return seen_ids[obj_id]
         elif istype(obj, (list, tuple)):
@@ -400,6 +406,13 @@ def convert_frame_assert(
     return wrap_convert_context(_convert_frame_assert)
 
 
+def maybe_cprofile(func):
+    if config.cprofile:
+        return cprofile_wrapper(func)
+    return func
+
+
+@maybe_cprofile
 def _compile(
     code: types.CodeType,
     globals: Dict[str, object],
@@ -416,6 +429,8 @@ def _compile(
     compile_id=None,
 ) -> Optional[GuardedCode]:
     from torch.fx.experimental.validator import (
+        bisect,
+        BisectValidationException,
         translation_validation_enabled,
         ValidationException,
     )
@@ -449,11 +464,7 @@ def _compile(
             raise
         except Exception:
             if translation_validation_enabled():
-                fakes = tracer.output.tracked_fakes
-                tracer.output.shape_env.produce_guards(
-                    [a.fake for a in fakes],
-                    [a.source for a in fakes],
-                )
+                bisect(tracer.output.shape_env)
             raise
 
         output = tracer.output
@@ -476,6 +487,7 @@ def _compile(
     ) -> Optional[GuardedCode]:
         nonlocal output
         for attempt in itertools.count():
+            CompileContext.get().attempt = attempt
             try:
                 out_code = transform_code_object(code, transform)
                 orig_code_map[out_code] = code
@@ -566,6 +578,7 @@ def _compile(
             GuardOnDataDependentSymNode,
             ValidationException,
             UncapturedHigherOrderOpError,
+            BisectValidationException,
         ) as e:
             fail_reason = str(e)
             exception_handler(e, code, frame, export=export)

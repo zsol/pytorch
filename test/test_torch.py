@@ -28,6 +28,7 @@ from itertools import product, combinations, permutations
 from functools import partial
 from torch import multiprocessing as mp
 from torch.testing import make_tensor
+
 from torch.testing._internal.common_utils import (  # type: ignore[attr-defined]
     TEST_WITH_TORCHINDUCTOR, TestCase, TEST_WITH_ROCM, run_tests, IS_JETSON,
     IS_WINDOWS, IS_FILESYSTEM_UTF8_ENCODING, NO_MULTIPROCESSING_SPAWN,
@@ -819,6 +820,8 @@ class TestTorchDeviceType(TestCase):
     def test_cpp_warnings_have_python_context(self, device):
         # Creates long string in advance to avoid a too-long Python line
         s = ".+Triggered internally at.+RangeFactories.+"
+        # nvfuser deprecation warning filter
+        warnings.filterwarnings("ignore", "torch::jit::fuser::cuda", UserWarning)
 
         def cpp_warn_fn():
             out = torch.empty((5,))
@@ -3125,6 +3128,10 @@ else:
             dst._neg_view().copy_(src)
             self.assertEqual(dst, src.neg(), exact_dtype=False)
 
+            # issue: https://github.com/pytorch/pytorch/issues/106051
+            dst._neg_view().copy_(dst)
+            self.assertEqual(dst, src, exact_dtype=False)
+
         for dst_dtype, src_dtype in [
                 (torch.complex64, torch.complex64),
                 (torch.complex128, torch.complex64),
@@ -5129,16 +5136,21 @@ else:
         # xc is a channels last tensor
         xc = input_generator_fn(device)
         # xc is not memory dense, but looks like channels last
-        if memory_format == torch.channels_last:
-            xc = xc[..., ::2, ::2]
-        else:
-            xc = xc[..., ::2, ::2, ::2]
+        # We don't preserve non-dense striding
+        if not TEST_WITH_TORCHINDUCTOR:
+            if memory_format == torch.channels_last:
+                xc = xc[..., ::2, ::2]
+            else:
+                xc = xc[..., ::2, ::2, ::2]
 
         clone = transformation_fn(xc, memory_format=torch.preserve_format)
+
+
         self.assertFalse(clone.is_contiguous())
         self.assertTrue(clone.is_contiguous(memory_format=memory_format))
-        self.assertFalse(xc.is_contiguous())
-        self.assertFalse(xc.is_contiguous(memory_format=memory_format))
+        if not TEST_WITH_TORCHINDUCTOR:
+            self.assertFalse(xc.is_contiguous())
+            self.assertFalse(xc.is_contiguous(memory_format=memory_format))
         if compare_data:
             self.assertEqual(xc, clone.to(xc))
 
@@ -5161,12 +5173,14 @@ else:
         if compare_data:
             self.assertEqual(xc, clone.to(xc))
 
-        x = torch.randn((3, 4, 5, 6, 7, 8, 9), device=device)
-        for _ in range(10):
-            permutation = list(range(len(x.shape)))
-            random.shuffle(permutation)
-            x = x.permute(permutation)
-            self.assertEqual(x.stride(), transformation_fn(x, memory_format=torch.preserve_format).stride())
+        # TODO copy _like constructors to stride permutation instead of just layout
+        if not TEST_WITH_TORCHINDUCTOR:
+            x = torch.randn((3, 4, 5, 6, 7, 8, 9), device=device)
+            for i in range(10):
+                permutation = list(range(len(x.shape)))
+                random.shuffle(permutation)
+                x = x.permute(permutation)
+                self.assertEqual(x.stride(), transformation_fn(x, memory_format=torch.preserve_format).stride())
 
     def test_memory_format_to(self, device):
         def get_generator(memory_format, shape):
@@ -5219,7 +5233,6 @@ else:
             self._test_memory_format_transformations(
                 device, get_generator(mf, shape), transformation_fn, mf, True, default_is_preserve=True)
 
-    @skipIfTorchInductor("To be supported")
     def test_memory_format_factory_like_functions_preserve(self, device):
         def get_generator(memory_format, shape):
             def input_generator_fn(device):
@@ -6049,6 +6062,30 @@ class TestTorch(TestCase):
                 self.assertRaises(RuntimeError, lambda: result.index_add_(dim, index, source))
                 index = (torch.ones(256) * 257).to(dtype=torch.long)
                 self.assertRaises(RuntimeError, lambda: result.index_add_(dim, index, source))
+
+    def test_linspace_logspace(self):
+        # Ensure the output does not require grad regardless of inputs requiring gard or not.
+        # The output of factory functions should not be part of any computational graph.
+        start = 0.0
+        end = 3.0
+
+        for step in [0, 1, 2]:
+            self.assertFalse(
+                torch.linspace(
+                    torch.tensor(start, requires_grad=True),
+                    torch.tensor(end, requires_grad=True), step
+                ).requires_grad
+            )
+            self.assertFalse(torch.linspace(torch.tensor(start, requires_grad=True), end, step).requires_grad)
+            self.assertFalse(torch.linspace(start, torch.tensor(end, requires_grad=True), step).requires_grad)
+            self.assertFalse(
+                torch.logspace(
+                    torch.tensor(start, requires_grad=True),
+                    torch.tensor(end, requires_grad=True), step
+                ).requires_grad
+            )
+            self.assertFalse(torch.logspace(torch.tensor(start, requires_grad=True), end, step).requires_grad)
+            self.assertFalse(torch.logspace(start, torch.tensor(end, requires_grad=True), step).requires_grad)
 
     # FIXME: move to shape ops test suite
     def test_unflatten(self):
@@ -8270,7 +8307,6 @@ tensor([[[1.+1.j, 1.+1.j, 1.+1.j,  ..., 1.+1.j, 1.+1.j, 1.+1.j],
     # FIXME: Port to a more appropriate test suite
     # Fails with inductor (and aot_eager) because functionalization replaces copy_ with copy,
     # which doesn't properly error on bad inputs.
-    @skipIfTorchInductor("FIXME")
     def test_copy_many_to_one(self):
         # Testing in-place copy where it attempt to write from many memory
         # storage to a single storage would cause RuntimeError to be thrown
@@ -8385,6 +8421,7 @@ tensor([[[1.+1.j, 1.+1.j, 1.+1.j,  ..., 1.+1.j, 1.+1.j, 1.+1.j],
                     self.assertIs(torch.int32, b.to(dtype=torch.int32).dtype)
                     self.assertEqual(b.device, b.to(dtype=torch.int32).device)
 
+    @skipIfTorchInductor("FIXME")
     def test_to(self):
         self._test_to_with_layout(torch.strided)
         is_cuda10_2_or_higher = (
@@ -8795,10 +8832,10 @@ tensor([[[1.+1.j, 1.+1.j, 1.+1.j,  ..., 1.+1.j, 1.+1.j, 1.+1.j],
 
     def test_tensor_base_init(self):
         # Direct construction not OK
-        self.assertRaises(RuntimeError, lambda: torch._C._TensorBase())
+        self.assertRaises(RuntimeError, lambda: torch._C.TensorBase())
 
         # But construction of subclass is OK
-        class T(torch._C._TensorBase):
+        class T(torch._C.TensorBase):
             pass
 
         T()
@@ -8817,7 +8854,7 @@ tensor([[[1.+1.j, 1.+1.j, 1.+1.j,  ..., 1.+1.j, 1.+1.j, 1.+1.j],
 
         # OK to call super().__new__, see
         # https://github.com/pytorch/pytorch/issues/57421
-        class TestTensor(torch._C._TensorBase):
+        class TestTensor(torch._C.TensorBase):
             @staticmethod
             def __new__(cls, x, *args, **kwargs):
                 return super().__new__(cls, x, *args, **kwargs)
@@ -9017,7 +9054,7 @@ tensor([[[1.+1.j, 1.+1.j, 1.+1.j,  ..., 1.+1.j, 1.+1.j, 1.+1.j],
 
     def test_tensor_slot_dealloc(self):
 
-        class SlotTensor1(torch._C._TensorBase):
+        class SlotTensor1(torch._C.TensorBase):
             __slots__ = ['slot1']
 
         class SlotTensor2(SlotTensor1):
@@ -9080,7 +9117,7 @@ tensor([[[1.+1.j, 1.+1.j, 1.+1.j,  ..., 1.+1.j, 1.+1.j, 1.+1.j],
     def test_tensor_finalizer_dealloc(self):
         m = [False]
 
-        class FinalizerTensor(torch._C._TensorBase):
+        class FinalizerTensor(torch._C.TensorBase):
             def __del__(self):
                 m[0] = True
 
@@ -9218,7 +9255,7 @@ tensor([[[1.+1.j, 1.+1.j, 1.+1.j,  ..., 1.+1.j, 1.+1.j, 1.+1.j],
         m1 = [False]
         m2 = [False]
 
-        class SlotTensor1(torch._C._TensorBase):
+        class SlotTensor1(torch._C.TensorBase):
             __slots__ = ['slot1']
 
             def __del__(self):

@@ -1,6 +1,5 @@
 import os
 import textwrap
-import warnings
 from enum import auto, Enum
 from traceback import extract_stack, format_exc, format_list, StackSummary
 from typing import cast, Optional
@@ -13,21 +12,15 @@ from .config import is_fbcode
 from .utils import counters
 
 if is_fbcode():
-    try:
-        from torch.fb.exportdb.logging import exportdb_error_message
-    except ModuleNotFoundError as err:
-        warnings.warn(
-            f"is_fbcode() is True, but could not import exportdb_error_message function: {err}. "
-            "Creating dummy replacement for it."
-        )
-
-        def exportdb_error_message(case_name):
-            return ""
-
+    from torch.fb.exportdb.logging import exportdb_error_message
 else:
 
     def exportdb_error_message(case_name):
-        return ""
+        return (
+            "For more information about this error, see: "
+            + "https://pytorch.org/docs/main/generated/exportdb/index.html#"
+            + case_name.replace("_", "-")
+        )
 
 
 import logging
@@ -128,7 +121,7 @@ class UserErrorType(Enum):
     DYNAMIC_CONTROL_FLOW = auto()
     ANTI_PATTERN = auto()
     STANDARD_LIBRARY = auto()
-    CONSTRAIN_VIOLATION = auto()
+    CONSTRAINT_VIOLATION = auto()
     DYNAMIC_DIM = auto()
     INVALID_INPUT = auto()
 
@@ -145,6 +138,10 @@ class UserError(Unsupported):
         """
         if case_name is not None:
             assert isinstance(case_name, str)
+            if msg.endswith("."):
+                msg += " "
+            else:
+                msg += "\n"
             msg += exportdb_error_message(case_name)
         super().__init__(msg)
         self.error_type = error_type
@@ -324,6 +321,6 @@ def format_error_msg(exc, code, record_filename=None, frame=None):
         msg = format_error_msg_verbose(exc, code, record_filename, frame)
     else:
         msg = f"WON'T CONVERT {code.co_name} {code.co_filename}\
- line {code.co_firstlineno} \ndue to: \n{format_exc(limit=-1)}"
+ line {code.co_firstlineno} \ndue to: \n{format_exc()}"
 
     return msg
