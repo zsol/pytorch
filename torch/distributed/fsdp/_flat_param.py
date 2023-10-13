@@ -862,8 +862,18 @@ class FlatParamHandle:
             start_idx = sharded_flat_param.numel() * self.rank
             end_idx = sharded_flat_param.numel() * (self.rank + 1) - 1  # inclusive
             self._init_shard_metadata(numel_padded, start_idx, end_idx)
-            if orig_storage._size() > 0:
-                orig_storage._resize_(0)
+            # Note [Skip storage resize when Dynamo tracing in FSDP]
+            #
+            # Resizing storage is used as a mechanism in FSDP to avoid churning tensor identity
+            # it allows FSDP to keep it's flat param while manipulating the underlying tensor's storage
+            # object. This can create discrepancies between the tensor meta (like size) and the actual
+            # underlying memory. Despite the fact that FSDP's size is canceled out across all the
+            # operations within FSDP, it is still a useful mechanism for freeing unused memory.
+            # For compilation, we do not need these ops. This, combined with the complexity of tracing
+            # and soundly capturing them, we chose to omit these ops for now.
+            if not torch.distributed._functional_collectives.is_torchdynamo_compiling():
+                if orig_storage._size() > 0:
+                    orig_storage._resize_(0)
         if self._use_orig_params:
             self._use_sharded_views()
 
@@ -1142,7 +1152,10 @@ class FlatParamHandle:
                 device=self.device,
                 dtype=self._fwd_bwd_param_dtype,
             )
-            _free_storage(flat_param._mp_shard)
+            _free_storage(
+                flat_param._mp_shard,
+                skip_if_compiling=True,
+            )
         if self.uses_sharded_strategy:
             # We maintain a padded unsharded tensor that serves as the
             # all-gather destination and owns the original parameter storages.
@@ -1158,7 +1171,10 @@ class FlatParamHandle:
                 dtype=unsharded_param_dtype,
             )
             flat_param._padded_unsharded_size = flat_param._full_param_padded.size()
-            _free_storage(flat_param._full_param_padded)
+            _free_storage(
+                flat_param._full_param_padded,
+                skip_if_compiling=True,
+            )
 
             if self._uses_param_mixed_precision:
                 # For parameter mixed precision, we maintain a full precision
@@ -1168,7 +1184,10 @@ class FlatParamHandle:
                     device=self.device,
                     dtype=flat_param.dtype,  # full precision
                 )
-                _free_storage(flat_param._full_prec_full_param_padded)
+                _free_storage(
+                    flat_param._full_prec_full_param_padded,
+                    skip_if_compiling=True,
+                )
 
     ###################
     # UNSHARD/RESHARD #
@@ -1216,7 +1235,9 @@ class FlatParamHandle:
         self._check_low_precision_shard()
         flat_param = self.flat_param
         _alloc_storage(
-            flat_param._mp_shard, flat_param._local_shard.size()  # type: ignore[attr-defined]
+            flat_param._mp_shard,
+            flat_param._local_shard.size(),  # type: ignore[attr-defined]
+            skip_if_compiling=True,
         )
         # `copy_()` implicitly casts to the low precision
         flat_param._mp_shard.copy_(  # type: ignore[attr-defined]
@@ -1273,7 +1294,11 @@ class FlatParamHandle:
         flat_param = self.flat_param
         unsharded_flat_param = self._get_padded_unsharded_flat_param()
         self._check_storage_freed(unsharded_flat_param)
-        _alloc_storage(unsharded_flat_param, flat_param._padded_unsharded_size)  # type: ignore[attr-defined]
+        _alloc_storage(
+            unsharded_flat_param,  # type: ignore[attr-defined]
+            flat_param._padded_unsharded_size,  # type: ignore[attr-defined]
+            skip_if_compiling=True,
+        )
         return unsharded_flat_param
 
     def _get_padded_unsharded_flat_param(self) -> torch.Tensor:
@@ -1300,7 +1325,10 @@ class FlatParamHandle:
             # so we should free it here to ensure a new all-gather for the next
             # forward/backward computation to persist the modifications.
             if flat_param._full_param_padded.untyped_storage().size() > 0:
-                _free_storage(flat_param._full_param_padded)
+                _free_storage(
+                    flat_param._full_param_padded,
+                    skip_if_compiling=True,
+                )
         else:
             unsharded_flat_param = flat_param._full_param_padded  # type: ignore[attr-defined]
         return unsharded_flat_param
@@ -1397,7 +1425,7 @@ class FlatParamHandle:
         _no_dispatch_record_stream(
             self.flat_param._mp_shard, self._device_handle.current_stream()  # type: ignore[attr-defined]
         )
-        _free_storage(self.flat_param._mp_shard)  # type: ignore[attr-defined]
+        _free_storage(self.flat_param._mp_shard, skip_if_compiling=True)  # type: ignore[attr-defined]
 
     @torch.no_grad()
     def unshard_grad(self):
@@ -1671,7 +1699,10 @@ class FlatParamHandle:
         _no_dispatch_record_stream(
             unsharded_flat_param, self._device_handle.current_stream()
         )
-        _free_storage(unsharded_flat_param)
+        _free_storage(
+            unsharded_flat_param,
+            skip_if_compiling=True,
+        )
 
     def _use_sharded_flat_param(self) -> None:
         """Switches to using the sharded flat parameter."""
