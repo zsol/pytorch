@@ -6978,6 +6978,15 @@ class CommonTemplate:
             rtol=1e-2,  # to pass lowp check on GPU
         )
 
+    def test_negative_index(self):
+        def fn(logits, sequence_lengths):
+            pooled_logits = logits[
+                torch.arange(1, device=self.device), sequence_lengths
+            ]
+            return pooled_logits
+
+        self.common(fn, (torch.randn((1, 128, 64)), torch.tensor([-1])))
+
     @skipIfRocm
     def test_scaled_dot_product_efficient_attention(self):
         if self.device == "cpu":
