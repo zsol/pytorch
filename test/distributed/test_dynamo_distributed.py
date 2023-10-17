@@ -22,6 +22,7 @@ from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy, lambda_aut
 from torch._higher_order_ops.wrap import tag_activation_checkpoint
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.testing._internal.common_utils import skipRocmIfTorchInductor
 from torch.testing._internal.common_distributed import (
     DynamoDistributedSingleProcTestCase,
     DynamoDistributedMultiProcTestCase,
@@ -368,6 +369,7 @@ class TestMultiProc(DynamoDistributedMultiProcTestCase):
 
     @skip_if_lt_x_gpu(1)
     @unittest.skipIf(not has_triton(), "Inductor+gpu needs triton and recent GPU arch")
+    @skipRocmIfTorchInductor
     def test_fsdp_inductor(self):
         with _dynamo_dist_per_rank_init(self.rank, self.world_size):
             # Test with basic FSDP wrapping (outer wrap around whole model)
@@ -520,6 +522,7 @@ class TestSingleProc(DynamoDistributedSingleProcTestCase):
 
     @unittest.skipIf(not has_triton(), "Inductor+gpu needs triton and recent GPU arch")
     @patch.object(config, "optimize_ddp", False)
+    @skipRocmIfTorchInductor
     def test_ddp_baseline_inductor(self):
         from torch.nn.parallel import DistributedDataParallel as DDP
 
@@ -560,6 +563,7 @@ class TestSingleProc(DynamoDistributedSingleProcTestCase):
 
     @patch.object(config, "optimize_ddp", True)
     @unittest.skipIf(not has_triton(), "Inductor+gpu needs triton and recent GPU arch")
+    @skipRocmIfTorchInductor
     def test_graph_split_inductor(self):
         """
         Same as above, but using inductor backend.
