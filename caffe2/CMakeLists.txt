@@ -64,7 +64,7 @@ if(INTERN_BUILD_ATEN_OPS)
   "${PYTHON_EXECUTABLE}" ${CMAKE_CURRENT_SOURCE_DIR}/contrib/aten/gen_op.py
     --aten_root=${CMAKE_CURRENT_SOURCE_DIR}/../aten
     --template_dir=${CMAKE_CURRENT_SOURCE_DIR}/contrib/aten
-    --yaml_dir=${CMAKE_CURRENT_BINARY_DIR}/../aten/src/ATen
+    --yaml_dir=${CMAKE_BINARY_DIR}/aten/src/ATen
     --install_dir=${CMAKE_CURRENT_BINARY_DIR}/contrib/aten
   DEPENDS
   ${torchgen_python}
@@ -693,6 +693,7 @@ if(USE_ROCM)
   # See NOTE [ ATen NVRTC Stub and HIP ]
   add_library(caffe2_nvrtc SHARED ${ATen_NVRTC_STUB_SRCS})
   target_link_libraries(caffe2_nvrtc ${PYTORCH_HIP_HCC_LIBRARIES} ${ROCM_HIPRTC_LIB})
+  target_include_directories(caffe2_nvrtc PRIVATE ${CMAKE_BINARY_DIR})
   target_compile_definitions(caffe2_nvrtc PRIVATE USE_ROCM __HIP_PLATFORM_HCC__)
   install(TARGETS caffe2_nvrtc DESTINATION "${TORCH_INSTALL_LIB_DIR}")
 endif()
@@ -863,6 +864,8 @@ if(USE_PRECOMPILED_HEADERS)
       "$<$<COMPILE_LANGUAGE:CXX>:ATen/core/ATen_pch.h>")
   # Exclude some files from using PCH
   set_source_files_properties(
+      # Not built with OpenMP, so PCH is invalid
+      ${Torch_SOURCE_DIR}/aten/src/ATen/MapAllocator.cpp
       # Builds with incompatible compiler flags
       ${Caffe2_CPU_SRCS_AVX2}
       ${Caffe2_CPU_SRCS_AVX512}
@@ -961,6 +964,7 @@ elseif(USE_CUDA)
   endif()
   set(CUDA_LINK_LIBRARIES_KEYWORD)
   torch_compile_options(torch_cuda)  # see cmake/public/utils.cmake
+  target_compile_options_if_supported(torch_cuda "-Wno-deprecated-copy")  # see cmake/public/utils.cmake
   target_compile_definitions(torch_cuda PRIVATE USE_CUDA)
 
   if(USE_CUSPARSELT)
@@ -1684,6 +1688,14 @@ if(BUILD_TEST)
           target_link_libraries(${test_name}_${CPU_CAPABILITY} c10 sleef gtest_main)
           if(USE_FBGEMM)
             target_link_libraries(${test_name}_${CPU_CAPABILITY} fbgemm)
+          endif()
+          if(USE_ASAN)
+            if(TARGET Sanitizer::address)
+              target_link_libraries(${test_name}_${CPU_CAPABILITY} Sanitizer::address)
+            endif()
+            if(TARGET Sanitizer::undefined)
+              target_link_libraries(${test_name}_${CPU_CAPABILITY} Sanitizer::undefined)
+            endif()
           endif()
         else()
           add_executable(${test_name}_${CPU_CAPABILITY} "${test_src}")

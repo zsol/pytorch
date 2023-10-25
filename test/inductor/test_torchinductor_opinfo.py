@@ -198,15 +198,17 @@ inductor_expected_failures_single_sample = defaultdict(dict)
 
 inductor_expected_failures_single_sample["cpu"] = {
     "_upsample_bilinear2d_aa": {f32, f64},
-    "bernoulli": {f32, f64},
+    "bernoulli": {f16, f32, f64},
     "cauchy": {f16},
     "cholesky": {f32, f64},
     "complex": {f16},
     "exponential": {f16},
+    "resize_": {b8, f16, f32, f64, i32, i64},
+    "resize_as_": {b8, f16, f32, f64, i32, i64},
     "geometric": {f16},
     "log_normal": {f16},
     "masked_scatter": {f16, f32, f64},
-    "multinomial": {f32, f64},
+    "multinomial": {f16, f32, f64},
     "nn.functional.avg_pool1d": {i64},
     "nn.functional.avg_pool2d": {i64},
     "nn.functional.local_response_norm": {i64},
@@ -234,11 +236,12 @@ inductor_expected_failures_single_sample["cuda"] = {
     "cauchy": {f16},
     "cholesky": {f32, f64},
     "exponential": {f16},
+    "resize_": {b8, f16, f32, f64, i32, i64},
+    "resize_as_": {b8, f16, f32, f64, i32, i64},
     "geometric": {f16},
     "log_normal": {f16},
     "masked_scatter": {f16, f32, f64},
     "multinomial": {f16, f32, f64},
-    "nanquantile": {f32, f64},
     "nn.functional.normalize": {f16},
     ("normal", "in_place"): {f16, f32, f64},
     ("normal", "number_mean"): {f16, f32, f64},
@@ -255,7 +258,6 @@ inductor_gradient_expected_failures_single_sample = defaultdict(dict)
 
 inductor_gradient_expected_failures_single_sample["cuda"] = {
     "atanh": {f32},
-    "nanquantile": {f32, f64},
     "nn.functional.normalize": {f16},
 }
 

@@ -238,7 +238,7 @@ public:
     return Vectorized<float>(Sleef_fmodf16(values, q));
   }
   Vectorized<float> log() const {
-    return Vectorized<float>(Sleef_logf16_u10(values));
+    return Vectorized<float>(Sleef_logf16_u35(values));
   }
   Vectorized<float> log2() const {
     return Vectorized<float>(Sleef_log2f16_u10(values));
@@ -276,6 +276,9 @@ public:
   }
   Vectorized<float> i0e() const {
     return map(calc_i0e);
+  }
+  Vectorized<float> digamma() const {
+    return map(calc_digamma);
   }
   Vectorized<float> igamma(const Vectorized<float> &x) const {
     __at_align__ float tmp[size()];

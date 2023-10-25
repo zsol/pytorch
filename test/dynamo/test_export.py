@@ -22,7 +22,6 @@ from torch._dynamo import config
 from torch._dynamo.exc import UserError
 from torch._dynamo.testing import normalize_gm
 from torch._export import dynamic_dim
-from torch._export.constraints import constrain_as_size, constrain_as_value
 from torch._higher_order_ops.out_dtype import out_dtype
 from torch._subclasses import fake_tensor
 from torch.fx.experimental.proxy_tensor import make_fx
@@ -2491,7 +2490,7 @@ def forward(self, x):
     def test_export_preserve_constraints_as_metadata_scalar(self):
         def f(x, y):
             b = x.item()
-            constrain_as_size(b)
+            torch._constrain_as_size(b)
             return torch.empty((b, y.shape[0]))
 
         x = torch.tensor([3])
@@ -2518,7 +2517,7 @@ def forward(self, x):
     def test_export_preserve_constraints_as_metadata_tensor(self):
         def f(x):
             b = x.nonzero()
-            constrain_as_value(b.shape[0], min=2, max=5)
+            torch._constrain_as_value(b.shape[0], min=2, max=5)
             return b
 
         y = torch.tensor([8, 8, 6])
@@ -2540,7 +2539,7 @@ def forward(self, x):
 
         def f(x, y):
             b = x.item()
-            constrain_as_size(b)
+            torch._constrain_as_size(b)
             return torch.empty((b, y.shape[0]))
 
         x = torch.tensor([3])
@@ -3638,20 +3637,23 @@ def forward(self, pred, x):
     ones_3 = torch.ones(6, 4)
     cond_true_0 = self.cond_true_0
     cond_false_0 = self.cond_false_0
-    cond = torch.ops.higher_order.cond(arg0, cond_true_0, cond_false_0, [arg1, ones, ones_1, ones_3, ones, ones_1, ones_2]);  arg0 = cond_true_0 = cond_false_0 = arg1 = ones = ones_1 = ones_3 = ones_2 = None
+    cond = torch.ops.higher_order.cond(arg0, cond_true_0, cond_false_0, [ones, ones_1, arg1, ones_3, ones_2]);  arg0 = cond_true_0 = cond_false_0 = ones = ones_1 = arg1 = ones_3 = ones_2 = None
     return pytree.tree_unflatten([cond], self._out_spec)""",  # noqa: B950,E122
         )
 
         self.assertExpectedInline(
             out_graph.cond_true_0.code.strip(),
             """\
-def forward(self, l_x_, a, b, d, c_false_branch, b_false_branch, a_false_branch):
-    add = l_x_ + l_x_;  l_x_ = None
-    cos = a.cos();  a = None
+def forward(self, a, b, l_x_, d_true_branch, c_false_branch):
+    a_1 = a
+    b_1 = b
+    l_x__1 = l_x_
+    add = l_x__1 + l_x__1;  l_x__1 = None
+    cos = a_1.cos();  a_1 = None
     add_1 = add + cos;  add = cos = None
-    cos_1 = b.cos();  b = None
+    cos_1 = b_1.cos();  b_1 = None
     add_2 = add_1 + cos_1;  add_1 = cos_1 = None
-    cos_2 = d.cos();  d = None
+    cos_2 = d_true_branch.cos();  d_true_branch = None
     add_3 = add_2 + cos_2;  add_2 = cos_2 = None
     return add_3""",
         )
@@ -3659,13 +3661,16 @@ def forward(self, l_x_, a, b, d, c_false_branch, b_false_branch, a_false_branch)
         self.assertExpectedInline(
             out_graph.cond_false_0.code.strip(),
             """\
-def forward(self, l_x_, d_true_branch, b_true_branch, a_true_branch, a, b, c):
-    mul = l_x_ * l_x_;  l_x_ = None
-    sin = a.sin();  a = None
+def forward(self, a, b, l_x_, d_true_branch, c_false_branch):
+    a_1 = a
+    b_1 = b
+    l_x__1 = l_x_
+    mul = l_x__1 * l_x__1;  l_x__1 = None
+    sin = a_1.sin();  a_1 = None
     add = mul + sin;  mul = sin = None
-    sin_1 = b.sin();  b = None
+    sin_1 = b_1.sin();  b_1 = None
     add_1 = add + sin_1;  add = sin_1 = None
-    sin_2 = c.sin();  c = None
+    sin_2 = c_false_branch.sin();  c_false_branch = None
     add_2 = add_1 + sin_2;  add_1 = sin_2 = None
     return add_2""",
         )
