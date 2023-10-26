@@ -9,7 +9,7 @@ import tokenize
 import unittest
 import warnings
 from types import FunctionType, ModuleType
-from typing import Any, Dict, Set
+from typing import Any, Dict, Set, Tuple
 from unittest import mock
 
 # Types saved/loaded in configs
@@ -162,7 +162,22 @@ class ConfigModule(ModuleType):
             lines.append(f"{mod}.{k} = {v!r}")
         return "\n".join(lines)
 
-    def get_hash(self):
+    def get_config_and_hash_with_updates(
+        self, updates: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], bytes]:
+        """Hashes the configs that are not compile_ignored, along with updates"""
+        if any(k in self._compile_ignored_keys for k in updates):
+            raise ValueError("update keys cannot be @compile_ignored")
+        cfg = dict(self._config)
+        cfg.update(updates)
+        hashed = self._get_hash(cfg)
+        return cfg, hashed
+
+    def _get_hash(self, config: Dict[str, Any]) -> bytes:
+        string_to_hash = repr(sorted(config.items()))
+        return hashlib.md5(string_to_hash.encode("utf-8")).digest()
+
+    def get_hash(self) -> bytes:
         """Hashes the configs that are not compile_ignored"""
         if self._is_dirty or self._hash_digest is None:
             dict_to_hash = {
@@ -170,18 +185,15 @@ class ConfigModule(ModuleType):
                 for k, v in self._config.items()
                 if k not in self._compile_ignored_keys
             }
-            string_to_hash = repr(sorted(dict_to_hash.items()))
-            self._hash_digest = hashlib.md5(string_to_hash.encode("utf-8")).digest()
+            self._hash_digest = self._get_hash(dict_to_hash)
             self._is_dirty = False
         return self._hash_digest
 
     def to_dict(self):
         warnings.warn(
-            (
-                "config.to_dict() has been deprecated. It may no longer change the underlying config.",
-                "use config.shallow_copy_dict() or config.get_config_copy() instead",
-            ),
-            DeprecationWarning,
+            """config.to_dict() has been deprecated. It may no longer change the underlying config\
+use config.shallow_copy_dict() or config.get_config_copy() instead""",
+            FutureWarning,
         )
         return self.shallow_copy_dict()
 
