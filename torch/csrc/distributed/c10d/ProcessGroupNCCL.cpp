@@ -13,6 +13,9 @@
 #include <unordered_set>
 #include <utility>
 
+#include <signal.h>
+#include <time.h>
+
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAGraph.h>
 #include <c10/core/DeviceType.h>
@@ -870,6 +873,9 @@ ProcessGroupNCCL::ProcessGroupNCCL(
       parseEnvVarIntDefault(NCCL_ASYNC_ERROR_HANDLING, 3 /*SkipCleanUp*/));
   desyncDebug_ = parseEnvVarFlag(NCCL_DESYNC_DEBUG) ||
       (dist_debug_level_ >= DebugLevel::Detail);
+  std::memset(&watchdogTimeoutSpec_, 0, sizeof(watchdogTimeoutSpec_));
+  watchdogTimeoutSpec_.it_value.tv_sec =
+      parseEnvVarIntDefault(TORCH_NCCL_WATCHDOG_TIMEOUT, 10 * 60);
 #ifdef ENABLE_NCCL_ERROR_CHECKING
   enableTiming_.store(
       parseEnvVarFlag(NCCL_ENABLE_TIMING) || desyncDebug_ ||
@@ -1114,6 +1120,14 @@ void abortCommsFromMap(
   }
 }
 
+void killNCCLPGWatchDogDeadlock(union sigval sv) {
+  LOG(ERROR) << "NCCL PG Watchdog hang and timeout";
+  timer_t timerID = *(timer_t*)sv.sival_ptr;
+  const auto errMsg = c10::str("NCCL watchdog timer delete error");
+  TIMER_CHECK(::timer_delete(timerID), errMsg);
+  ::kill(::getpid(), SIGKILL);
+}
+
 // Abort all communicators on this rank
 void ProcessGroupNCCL::abort(c10::optional<std::string> abortReason) {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -1154,11 +1168,26 @@ ProcessGroupNCCL::~ProcessGroupNCCL() {
 
 void ProcessGroupNCCL::ncclCommWatchdog() {
   try {
+    // Inside watchdog thread, we might still call CUDA Event and it will
+    // hang the thread and stuck there silent for hours. We want to use a
+    // timer to kill the process if watchdog timeout.
+    struct sigevent action;
+    std::memset(&action, 0, sizeof(action));
+    action.sigev_notify = SIGEV_THREAD;
+    action.sigev_notify_function = killNCCLPGWatchDogDeadlock;
+    const auto errMsg = c10::str(
+        "[Rank ", rank_, "] NCCL watchdog thread timer creation errors!");
+    TIMER_CHECK(::timer_create(CLOCK_MONOTONIC, &action, &timerId_), errMsg);
+
     VLOG(2) << "[Rank " << rank_ << "] NCCL watchdog thread started!";
     workCleanupLoop();
     VLOG(2) << "[Rank " << rank_
             << "] NCCL watchdog thread terminated normally";
   } catch (std::exception& e) {
+    const auto errMsg = c10::str(
+        "[Rank ", rank_, "] NCCL watchdog thread timer deletion errors!");
+    TIMER_CHECK(::timer_delete(timerId_), errMsg);
+
     if (std::string(e.what()).find("driver shutting down") !=
         std::string::npos) {
       LOG(INFO)
@@ -1180,6 +1209,9 @@ void ProcessGroupNCCL::ncclCommWatchdog() {
       std::rethrow_exception(watchDogException_);
     }
   } catch (...) {
+    const auto errMsg = c10::str(
+        "[Rank ", rank_, "] NCCL watchdog thread timer deletion errors!");
+    TIMER_CHECK(::timer_delete(timerId_), errMsg);
     const auto exitMsg = c10::str(
         "[Rank ",
         rank_,
@@ -1217,9 +1249,18 @@ void ProcessGroupNCCL::logWorkEnd(WorkNCCL& work) {
 
 void ProcessGroupNCCL::workCleanupLoop() {
   bool done = false;
-
   std::list<ProcessGroupNCCL::WorkNCCL> completedWorkList;
   while (!done || !terminateProcessGroup_.load()) {
+    const auto errMsg =
+        c10::str("[Rank ", rank_, "] NCCL watchdog timer set error");
+    TIMER_CHECK(
+        ::timer_settime(
+            timerId_,
+            /*flags=*/0,
+            &watchdogTimeoutSpec_,
+            /*old_value=*/nullptr),
+        errMsg);
+
     std::unique_lock<std::mutex> lock(workMetaListMutex_);
     // We busy-poll the work vector every kWatchdogThreadSleepMillis
     // milliseconds as long as the atomic is True.
