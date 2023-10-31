@@ -8,7 +8,7 @@ import torch
 import torch._dynamo
 import torch.distributed as dist
 import torch.nn as nn
-from torch.distributed._tensor import DeviceMesh, DTensor, Replicate, Shard
+from torch.distributed._tensor import DeviceMesh, DTensor, init_device_mesh, Replicate, Shard
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.tensor.parallel import (
     ColwiseParallel,
@@ -16,7 +16,6 @@ from torch.distributed.tensor.parallel import (
     PrepareModuleInput,
     RowwiseParallel,
 )
-from torch.distributed.tensor.parallel.fsdp import enable_2d_with_fsdp
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 from torch.testing._internal.common_utils import (
     instantiate_parametrized_tests,
@@ -229,18 +228,17 @@ class TestDTensorCompileE2E(DTensorTestBase):
     @with_comms
     @skip_if_lt_x_gpu(4)
     def test_2d_fsdp_tp_compile(self):
-        data_parallel_size = 2
         model = SimpleModel(self.device_type)
         model_copy = copy.deepcopy(model)
-        enable_2d_with_fsdp()
 
         # 2-D mesh is [dp, tp]
-        twod_mesh = DeviceMesh(
-            device_type="cuda",
-            mesh=torch.arange(0, self.world_size).view(data_parallel_size, -1),
+        twod_mesh = init_device_mesh(
+            "cuda",
+            (2, self.world_size // 2),
+            mesh_dim_names=("dp", "tp")
         )
-
-        fsdp_pg = twod_mesh.get_dim_groups()[0]
+        tp_mesh = twod_mesh["tp"]
+        dp_mesh = twod_mesh["dp"]
 
         inp = torch.rand(20, 10, device=self.device_type)
         parallelize_plan = {
@@ -249,18 +247,15 @@ class TestDTensorCompileE2E(DTensorTestBase):
             "mlp_1.net1": ColwiseParallel(),
             "mlp_1.net2": RowwiseParallel(),
         }
-        tp_model = parallelize_module(model, twod_mesh, parallelize_plan, tp_mesh_dim=1)
+        tp_model = parallelize_module(model, tp_mesh, parallelize_plan)
         eager_2d = FSDP(
-            tp_model, process_group=fsdp_pg, device_id=self.rank, use_orig_params=True
+            tp_model, device_mesh=dp_mesh, use_orig_params=True
         )
         out = eager_2d(inp)
-        tp_model2 = parallelize_module(
-            model_copy, twod_mesh, parallelize_plan, tp_mesh_dim=1
-        )
+        tp_model2 = parallelize_module(model_copy, tp_mesh, parallelize_plan,)
         fsdp_2d = FSDP(
             tp_model2,
-            process_group=fsdp_pg,
-            device_id=self.rank,
+            device_mesh=dp_mesh,
             use_orig_params=True,
         )
 
