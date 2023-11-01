@@ -435,5 +435,40 @@ class TestGroupBatchFusion(TestCase):
         counters.clear()
 
 
+class TestBMMFusionModule(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.my_modules = torch.nn.ModuleList()
+        for _ in range(10):
+            self.my_modules.append(torch.nn.Linear(10, 10))
+
+    def forward(self, inputs):
+        output = None
+        for linear, input in zip(self.my_modules, inputs):
+            if output is None:
+                output = linear(input)
+            else:
+                output += linear(input)
+        return output
+
+
+@requires_cuda()
+@torch._inductor.config.patch(post_grad_batch_fusion=True)
+class TestBatchLinearPostGradFusion(TestCase):
+    def test_batch_linear_post_grad_fusion(self):
+        pt1_module = TestBMMFusionModule().cuda()
+        inputs = []
+        for _ in range(10):
+            inputs.append(torch.randn(10, 10).cuda())
+        eager_output = pt1_module(inputs)
+        pt2_module = torch.compile(pt1_module)
+        pt2_output = pt2_module(inputs)
+        self.assertTrue(torch.allclose(eager_output, pt2_output))
+        self.assertEqual(
+            counters["inductor"]["post_grad_batch_fusion"],
+            2,
+        )
+
+
 if __name__ == "__main__":
     run_tests()

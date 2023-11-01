@@ -79,6 +79,9 @@ group_fusion = False
 # enable pattern match with batch fusion (using torch op)
 batch_fusion = True
 
+# enable post-grad pattern match with batch fusion (using torch op)
+post_grad_batch_fusion = False
+
 # enable reordering pass for improving memory locality
 reorder_for_locality = True
 
