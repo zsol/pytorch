@@ -1,5 +1,6 @@
 import math
 from enum import Enum
+from functools import partial
 from typing import List, Optional, Sequence, Tuple, Union
 
 import torch
@@ -8,6 +9,7 @@ from torch import SymBool, SymFloat, Tensor
 from torch._decomp import (
     _add_op_to_registry,
     _convert_out_params,
+    decomposition_table,
     global_decomposition_table,
     meta_table,
 )
@@ -44,6 +46,24 @@ def register_meta(op):
 
         def register(op):
             _add_op_to_registry(meta_table, op, fn)
+
+        tree_map(register, op)
+        return fn
+
+    return wrapper
+
+
+def register_meta_foreach(op):
+    def wrapper(fn):
+        fn = _convert_out_params(fn)
+
+        def register(op):
+            scalar_op_name, _ = str(op).replace("aten._foreach_", "").split(".")
+            scalar_op = getattr(aten, scalar_op_name).default
+            scalar_fn = decomposition_table.get(scalar_op, None)
+            if not scalar_fn:
+                scalar_fn = meta_table[scalar_op]
+            _add_op_to_registry(meta_table, op, partial(fn, _scalar_fn=scalar_fn))
 
         tree_map(register, op)
         return fn
@@ -2934,37 +2954,94 @@ def meta_addbmm(self, batch1, batch2, *, beta=1, alpha=1):
     return self.new_empty(self.size())
 
 
-@register_meta(
+@register_meta([aten.round.default, aten.round.decimals])
+def meta_round(self, **kwargs):
+    return _elementwise_meta(
+        self, type_promotion=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT
+    )
+
+
+@register_meta_foreach(
     [
         aten._foreach_abs_.default,
+        aten._foreach_acos_.default,
+        aten._foreach_asin_.default,
+        aten._foreach_atan_.default,
+        aten._foreach_ceil_.default,
+        aten._foreach_cos_.default,
+        aten._foreach_cosh_.default,
+        aten._foreach_erf_.default,
+        aten._foreach_erfc_.default,
+        aten._foreach_exp_.default,
+        aten._foreach_expm1_.default,
+        aten._foreach_frac_.default,
+        aten._foreach_floor_.default,
+        aten._foreach_lgamma_.default,
+        aten._foreach_log_.default,
+        aten._foreach_log10_.default,
+        aten._foreach_log1p_.default,
+        aten._foreach_log2_.default,
         aten._foreach_neg_.default,
         aten._foreach_reciprocal_.default,
-        aten._foreach_sqrt_.default,
+        aten._foreach_round_.default,
+        aten._foreach_sigmoid_.default,
         aten._foreach_sign_.default,
+        aten._foreach_sin_.default,
+        aten._foreach_sinh_.default,
+        aten._foreach_sqrt_.default,
+        aten._foreach_tan_.default,
+        aten._foreach_tanh_.default,
+        aten._foreach_trunc_.default,
     ]
 )
-def meta__foreach_unaop_(self):
+def meta__foreach_unaop_(self, _scalar_fn):
     torch._check(
         isinstance(self, List),
         lambda: f"Expect List[Tensor] but got {type(self)}",
     )
+    for s in self:
+        _scalar_fn(s)
 
 
-@register_meta(
+@register_meta_foreach(
     [
         aten._foreach_abs.default,
+        aten._foreach_acos.default,
+        aten._foreach_asin.default,
+        aten._foreach_atan.default,
+        aten._foreach_ceil.default,
+        aten._foreach_cos.default,
+        aten._foreach_cosh.default,
+        aten._foreach_erf.default,
+        aten._foreach_erfc.default,
+        aten._foreach_exp.default,
+        aten._foreach_expm1.default,
+        aten._foreach_frac.default,
+        aten._foreach_floor.default,
+        aten._foreach_lgamma.default,
+        aten._foreach_log.default,
+        aten._foreach_log10.default,
+        aten._foreach_log1p.default,
+        aten._foreach_log2.default,
         aten._foreach_neg.default,
         aten._foreach_reciprocal.default,
-        aten._foreach_sqrt.default,
+        aten._foreach_round.default,
+        aten._foreach_sigmoid.default,
         aten._foreach_sign.default,
+        aten._foreach_sin.default,
+        aten._foreach_sinh.default,
+        aten._foreach_sqrt.default,
+        aten._foreach_tan.default,
+        aten._foreach_tanh.default,
+        aten._foreach_trunc.default,
     ]
 )
-def meta__foreach_unaop(self):
+def meta__foreach_unaop(self, _scalar_fn):
     torch._check(
         isinstance(self, List),
         lambda: f"Expect List[Tensor] but got {type(self)}",
     )
-    return [torch.empty_like(s) for s in self]
+    return [_scalar_fn(s) for s in self]
 
 
 def _check_foreach_binop_tensor_lists(self, other):
@@ -3567,13 +3644,6 @@ def meta_binop_inplace_alpha(self, other, alpha=1):
     if isinstance(other, torch.Tensor):
         check_inplace_broadcast(self.shape, other.shape)
     return self
-
-
-@register_meta([aten.round.default, aten.round.decimals])
-def meta_round(self, **kwargs):
-    return _elementwise_meta(
-        self, type_promotion=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT
-    )
 
 
 def shift_dtype_check(fn_name, self, val):
