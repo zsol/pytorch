@@ -124,6 +124,7 @@ from .misc import (
     MethodWrapperVariable,
     NumpyVariable,
     PythonModuleVariable,
+    SavedTensorBox,
     SkipFilesVariable,
     TypingVariable,
 )
@@ -554,14 +555,20 @@ class VariableBuilder:
                 guards=make_guards(GuardBuilder.FUNCTION_MATCH),
             )
         elif isinstance(value, torch.autograd.function.FunctionCtx):
-            # The autograd.function context
+            saved_tensors_source = AttrSource(self.source, "saved_tensors")
+            saved_tensors = [
+                VariableBuilder(self.tx, GetItemSource(saved_tensors_source, n))(v)
+                for n, v in enumerate(value.saved_tensors)
+            ]
             return self.tx.output.side_effects.track_object_existing(
                 self.source,
                 value,
                 AutogradFunctionContextVariable(
                     value,
                     source=self.source,
-                    guards=make_guards(GuardBuilder.TYPE_MATCH),
+                    guards=make_guards(GuardBuilder.TYPE_MATCH)
+                    | {saved_tensors_source.make_guard(GuardBuilder.LIST_LENGTH)},
+                    saved_tensors=SavedTensorBox(saved_tensors),
                 ),
             )
         elif (
@@ -1073,23 +1080,6 @@ class VariableBuilder:
         if is_duplicate_tensor:
             return self.tx.output.input_source_to_var[source]
 
-        # We have accessed the SAME tensor from a different source.  In some
-        # situations, it doesn't matter if you have the same tensor identity
-        # or not, but we are unable to do this fine-grained tracking.  So
-        # instead we just say, if x is y, then to successfully reuse this
-        # compiled tensor again, you must have x is y again.  Negative
-        # aliases, that is, that x is not y, are IMPLICITLY checked as part of
-        # the code cache matching process, you don't need to explicitly
-        # generate a guard for it (nor would you want to, you need O(n^2)
-        # pairwise 'is not' tests to do it.)
-        if value in self.tx.output.real_value_tensor_positive_aliases:
-            stored_value = self.tx.output.real_value_tensor_positive_aliases[value]
-            # TODO(voz): Decently common pattern, refactor at some point.
-            dup_guard = self._make_dupe_guard(stored_value)
-            if dup_guard:
-                stored_value = stored_value.add_guards(self.make_guards(dup_guard))
-            return stored_value
-
         # By this point, we should have deduplicated all tensors
         self.assert_not_wrapped_by_this_graph(value)
 
@@ -1158,8 +1148,16 @@ class VariableBuilder:
 
         from torch._numpy import _util
 
+        readonly = not value.flags.writeable
+        if readonly:
+            value.flags.writeable = True
+
         try:
             tensor_value = _util._try_convert_to_tensor(value)
+            if readonly:
+                from torch._prims_common import clone_preserve_strides
+
+                tensor_value = clone_preserve_strides(tensor_value)
         except NotImplementedError as e:
             # failed to convert to tensor, graph break
             unimplemented(str(e))
@@ -1277,7 +1275,7 @@ class VariableBuilder:
             else:
                 wrapped_value = torch.tensor(value)
             if not isinstance(self.get_source(), RandomValueSource):
-                guards = {self.get_source().make_guard(GuardBuilder.TYPE_MATCH, True)}
+                guards = {self.get_source().make_guard(GuardBuilder.TYPE_MATCH)}
                 options = {"guards": guards}
             else:
                 options = {}
