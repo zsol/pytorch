@@ -9,25 +9,15 @@ import gzip
 
 import logging
 
-from typing import (
-    Callable,
-    Generator,
-    Generic,
-    List,
-    Literal,
-    Mapping,
-    Optional,
-    Type,
-    TypeVar,
-)
+from typing import Callable, Generator, List, Literal, Mapping, Optional, Type
+
+from typing_extensions import Self
 
 from torch.onnx._internal.diagnostics import infra
 from torch.onnx._internal.diagnostics.infra import formatter, sarif, utils
 from torch.onnx._internal.diagnostics.infra.sarif import version as sarif_version
 
 
-# This is a workaround for mypy not supporting Self from typing_extensions.
-_Diagnostic = TypeVar("_Diagnostic", bound="Diagnostic")
 diagnostic_logger: logging.Logger = logging.getLogger(__name__)
 
 
@@ -92,24 +82,24 @@ class Diagnostic:
         )
         return sarif_result
 
-    def with_location(self: _Diagnostic, location: infra.Location) -> _Diagnostic:
+    def with_location(self: Self, location: infra.Location) -> Self:
         """Adds a location to the diagnostic."""
         self.locations.append(location)
         return self
 
     def with_thread_flow_location(
-        self: _Diagnostic, location: infra.ThreadFlowLocation
-    ) -> _Diagnostic:
+        self: Self, location: infra.ThreadFlowLocation
+    ) -> Self:
         """Adds a thread flow location to the diagnostic."""
         self.thread_flow_locations.append(location)
         return self
 
-    def with_stack(self: _Diagnostic, stack: infra.Stack) -> _Diagnostic:
+    def with_stack(self: Self, stack: infra.Stack) -> Self:
         """Adds a stack to the diagnostic."""
         self.stacks.append(stack)
         return self
 
-    def with_graph(self: _Diagnostic, graph: infra.Graph) -> _Diagnostic:
+    def with_graph(self: Self, graph: infra.Graph) -> Self:
         """Adds a graph to the diagnostic."""
         self.graphs.append(graph)
         return self
@@ -270,16 +260,16 @@ class RuntimeErrorWithDiagnostic(RuntimeError):
 
 
 @dataclasses.dataclass
-class DiagnosticContext(Generic[_Diagnostic]):
+class DiagnosticContext(Diagnostic):
     name: str
     version: str
     options: infra.DiagnosticOptions = dataclasses.field(
         default_factory=infra.DiagnosticOptions
     )
-    diagnostics: List[_Diagnostic] = dataclasses.field(init=False, default_factory=list)
+    diagnostics: List[Self] = dataclasses.field(init=False, default_factory=list)
     # TODO(bowbao): Implement this.
     # _invocation: infra.Invocation = dataclasses.field(init=False)
-    _inflight_diagnostics: List[_Diagnostic] = dataclasses.field(
+    _inflight_diagnostics: List[Self] = dataclasses.field(
         init=False, default_factory=list
     )
     _previous_log_level: int = dataclasses.field(init=False, default=logging.WARNING)
@@ -329,7 +319,7 @@ class DiagnosticContext(Generic[_Diagnostic]):
             with open(file_path, "w") as f:
                 f.write(self.to_json())
 
-    def log(self, diagnostic: _Diagnostic) -> None:
+    def log(self, diagnostic: Self) -> None:
         """Logs a diagnostic.
 
         This method should be used only after all the necessary information for the diagnostic
@@ -346,7 +336,7 @@ class DiagnosticContext(Generic[_Diagnostic]):
             diagnostic.level = infra.Level.ERROR
         self.diagnostics.append(diagnostic)
 
-    def log_and_raise_if_error(self, diagnostic: _Diagnostic) -> None:
+    def log_and_raise_if_error(self, diagnostic: Self) -> None:
         """Logs a diagnostic and raises an exception if it is an error.
 
         Use this method for logging non inflight diagnostics where diagnostic level is not known or
@@ -367,9 +357,7 @@ class DiagnosticContext(Generic[_Diagnostic]):
             raise RuntimeErrorWithDiagnostic(diagnostic)
 
     @contextlib.contextmanager
-    def add_inflight_diagnostic(
-        self, diagnostic: _Diagnostic
-    ) -> Generator[_Diagnostic, None, None]:
+    def add_inflight_diagnostic(self, diagnostic: Self) -> Generator[Self, None, None]:
         """Adds a diagnostic to the context.
 
         Use this method to add diagnostics that are not created by the context.
@@ -382,7 +370,7 @@ class DiagnosticContext(Generic[_Diagnostic]):
         finally:
             self._inflight_diagnostics.pop()
 
-    def push_inflight_diagnostic(self, diagnostic: _Diagnostic) -> None:
+    def push_inflight_diagnostic(self, diagnostic: Self) -> None:
         """Pushes a diagnostic to the inflight diagnostics stack.
 
         Args:
@@ -393,7 +381,7 @@ class DiagnosticContext(Generic[_Diagnostic]):
         """
         self._inflight_diagnostics.append(diagnostic)
 
-    def pop_inflight_diagnostic(self) -> _Diagnostic:
+    def pop_inflight_diagnostic(self) -> Self:
         """Pops the last diagnostic from the inflight diagnostics stack.
 
         Returns:
@@ -401,7 +389,7 @@ class DiagnosticContext(Generic[_Diagnostic]):
         """
         return self._inflight_diagnostics.pop()
 
-    def inflight_diagnostic(self, rule: Optional[infra.Rule] = None) -> _Diagnostic:
+    def inflight_diagnostic(self, rule: Optional[infra.Rule] = None) -> Self:
         if rule is None:
             # TODO(bowbao): Create builtin-rules and create diagnostic using that.
             if len(self._inflight_diagnostics) <= 0:
