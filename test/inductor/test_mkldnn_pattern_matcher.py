@@ -906,31 +906,39 @@ class TestPatternMatcher(TestPatternMatcherBase):
             def __init__(self, use_bias):
                 super().__init__()
                 self.linear = torch.nn.Linear(4, 4, use_bias)
+                self.linear2 = torch.nn.Linear(4, 4, use_bias)
 
             def forward(self, x):
-                return self.linear(x)
+                return self.linear2(self.linear(x))
 
         bias_list = [True, False]
-        for bias in bias_list:
-            mod = M(bias).eval()
-            v = torch.randn((2, 4))
+        for int8_mixed_bf16 in (
+            [False, True] if torch.ops.mkldnn._is_mkldnn_bf16_supported() else [False]
+        ):
+            for bias in bias_list:
+                mod = M(bias).eval()
+                v = torch.randn((2, 4))
 
-            def matcher_check_fn():
-                # 1. dequant-linear pattern matched in quantization weight prepack
-                #    [convert_element_type_1, sub, mul_1, dequantize_per_channel, t, addmm/mm]
-                self.assertEqual(
-                    counters["inductor"]["qlinear_weight_prepack_matcher_count"], 1
-                )
-                self.assertEqual(
-                    counters["inductor"]["qlinear_weight_prepack_matcher_nodes"], 6
-                )
+                def matcher_check_fn():
+                    # 1. dequant-linear pattern matched in quantization weight prepack
+                    #    int8-mixed-fp32: [convert_element_type_1, sub, mul_1, dequantize_per_channel, t, addmm/mm]
+                    #    int8-mixed-bf16: [convert_element_type_1, sub, mul_1, optional(convert_element_type_3),
+                    #                      dequantize_per_channel, optional(convert_element_type_9), t, addmm/mm]
+                    self.assertEqual(
+                        counters["inductor"]["qlinear_weight_prepack_matcher_count"], 2
+                    )
+                    self.assertEqual(
+                        counters["inductor"]["qlinear_weight_prepack_matcher_nodes"],
+                        16 if int8_mixed_bf16 else 12,
+                    )
 
-            self._test_common(
-                mod,
-                (v,),
-                check_quantization=True,
-                matcher_check_fn=matcher_check_fn,
-            )
+                self._test_common(
+                    mod,
+                    (v,),
+                    check_autocast=int8_mixed_bf16,
+                    check_quantization=True,
+                    matcher_check_fn=matcher_check_fn,
+                )
 
     @skipIfNoDynamoSupport
     @skipIfNoONEDNN
@@ -945,35 +953,38 @@ class TestPatternMatcher(TestPatternMatcherBase):
                 super().__init__()
                 self.linear = torch.nn.Linear(4, 4, use_bias)
                 self.unary_fn = torch.nn.ReLU()
+                self.linear2 = torch.nn.Linear(4, 4, use_bias)
+                self.unary_fn2 = torch.nn.ReLU()
 
             def forward(self, x):
-                return self.unary_fn(self.linear(x))
+                tmp = self.unary_fn(self.linear(x))
+                return self.unary_fn2(self.linear2(tmp))
 
         bias_list = [True, False]
-        for bias in bias_list:
-            mod = M(bias).eval()
-            v = torch.randn((2, 4))
+        for int8_mixed_bf16 in (
+            [False, True] if torch.ops.mkldnn._is_mkldnn_bf16_supported() else [False]
+        ):
+            for bias in bias_list:
+                mod = M(bias).eval()
+                v = torch.randn((2, 4))
 
-            def matcher_check_fn():
-                # 1. dequant-linear pattern matched in quantization weight prepack
-                #    [convert_element_type_1, sub, mul_1, dequantize_per_channel, t, addmm/mm]
-                self.assertEqual(
-                    counters["inductor"]["qlinear_weight_prepack_matcher_count"], 1
-                )
-                self.assertEqual(
-                    counters["inductor"]["qlinear_weight_prepack_matcher_nodes"], 6
-                )
-                # 2. QLinear Unary fusion in post-grad fusion pass * 1
-                #    [qlinear_pointwise_default, relu]
-                self.assertEqual(counters["inductor"]["qlinear_unary_matcher_count"], 1)
-                self.assertEqual(counters["inductor"]["qlinear_unary_matcher_nodes"], 2)
+                def matcher_check_fn():
+                    # 1. dequant-linear pattern matched in quantization weight prepack
+                    self.assertEqual(
+                        counters["inductor"]["qlinear_weight_prepack_matcher_count"], 2
+                    )
+                    # 2. QLinear Unary fusion in post-grad fusion pass
+                    self.assertEqual(
+                        counters["inductor"]["qlinear_unary_matcher_count"], 2
+                    )
 
-            self._test_common(
-                mod,
-                (v,),
-                check_quantization=True,
-                matcher_check_fn=matcher_check_fn,
-            )
+                self._test_common(
+                    mod,
+                    (v,),
+                    check_autocast=int8_mixed_bf16,
+                    check_quantization=True,
+                    matcher_check_fn=matcher_check_fn,
+                )
 
     @skipIfNoDynamoSupport
     @skipIfNoONEDNN
@@ -1010,30 +1021,29 @@ class TestPatternMatcher(TestPatternMatcherBase):
         mod = M().eval()
         v = torch.rand((2, 4))
 
-        def matcher_check_fn():
-            # 1. Dequant pattern matcher for dequant promotion * 1
-            #    [convert_element_type_3, sub_1, mul_3]
-            self.assertEqual(counters["inductor"]["dequant_promotion_matcher_count"], 1)
-            self.assertEqual(counters["inductor"]["dequant_promotion_matcher_nodes"], 3)
-            # 2. dequant-linear pattern matched in quantization weight prepack * 3
-            #    [convert_element_type_1, sub, mul_1, dequantize_per_channel, t, addmm/mm]
-            self.assertEqual(
-                counters["inductor"]["qlinear_weight_prepack_matcher_count"], 3
-            )
-            self.assertEqual(
-                counters["inductor"]["qlinear_weight_prepack_matcher_nodes"], 18
-            )
-            # 3. QLinear Unary fusion in post-grad fusion pass * 1
-            #    [qlinear_pointwise_default, mul_6, round_4, add_3, clamp_min_3, clamp_max_3, convert_element_type_6]
-            self.assertEqual(counters["inductor"]["qlinear_unary_matcher_count"], 1)
-            self.assertEqual(counters["inductor"]["qlinear_unary_matcher_nodes"], 7)
+        for int8_mixed_bf16 in (
+            [False, True] if torch.ops.mkldnn._is_mkldnn_bf16_supported() else [False]
+        ):
 
-        self._test_common(
-            mod,
-            (v,),
-            check_quantization=True,
-            matcher_check_fn=matcher_check_fn,
-        )
+            def matcher_check_fn():
+                # 1. Dequant pattern matcher for dequant promotion * 1
+                self.assertEqual(
+                    counters["inductor"]["dequant_promotion_matcher_count"], 1
+                )
+                # 2. dequant-linear pattern matched in quantization weight prepack * 3
+                self.assertEqual(
+                    counters["inductor"]["qlinear_weight_prepack_matcher_count"], 3
+                )
+                # 3. QLinear Unary fusion in post-grad fusion pass * 1
+                self.assertEqual(counters["inductor"]["qlinear_unary_matcher_count"], 1)
+
+            self._test_common(
+                mod,
+                (v,),
+                check_autocast=int8_mixed_bf16,
+                check_quantization=True,
+                matcher_check_fn=matcher_check_fn,
+            )
 
     @skipIfNoDynamoSupport
     @skipIfRocm
