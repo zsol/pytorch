@@ -763,6 +763,8 @@ class TestStandaloneCPPJIT(TestCase):
                     shell=shell,
                     stdout=subprocess.PIPE,
                 )
+                print('ionut')
+                print(r.stdout.decode("utf-8"))
                 self.assertEqual(r.returncode, 0)
                 self.assertEqual(
                     # Windows prints "\r\n" for newlines.
