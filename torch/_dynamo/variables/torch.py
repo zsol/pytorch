@@ -259,6 +259,9 @@ class TorchVariable(VariableTracker):
         except RuntimeError as e:
             assert "No such operator" in str(e), str(e)
             self_should_be_none = None
+        except AssertionError as e:
+            assert "Unknown attribute" in str(e), str(e)
+            self_should_be_none = None
 
         # assert "_ntuple.<locals>.parse" not in str(value)
 
