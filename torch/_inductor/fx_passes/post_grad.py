@@ -638,7 +638,7 @@ def reinplace_scatters(graph):
     storage_to_nodes = defaultdict(list)
     for node in reversed(graph.nodes):
         storage_to_nodes[get_node_storage(node)].append(node)
-        if node.target == aten.copy_.default:
+        if node.target == aten.copy_.default and node.args[0].op == "placeholder":
             dst = node.args[0]
             src = node.args[1]
             # If the target is a getitem and it indexes a possible clone,
@@ -650,7 +650,6 @@ def reinplace_scatters(graph):
             ):
                 src = src.args[0]
             copy_args_to_copy_nodes[(dst, src)] = node
-            assert node.args[0].op == "placeholder"
             mutated_inputs.add(node.args[0])
 
     def can_inplace(node, mutated_arg):
