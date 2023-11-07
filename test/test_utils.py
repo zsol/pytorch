@@ -761,6 +761,7 @@ class TestStandaloneCPPJIT(TestCase):
             env = os.environ.copy()
             cutpipath="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/extras/CUPTI/lib64"
             env['PATH'] = cutpipath + os.pathsep + env['PATH']
+            print(env['PATH'])
             entries = os.listdir(cutpipath)
             for entry in entries:
                 print(entry)
