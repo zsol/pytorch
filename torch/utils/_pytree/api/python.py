@@ -83,10 +83,6 @@ DEFAULT_TREESPEC_SERIALIZATION_PROTOCOL = 1
 NO_SERIALIZED_TYPE_NAME_FOUND = "NO_SERIALIZED_TYPE_NAME_FOUND"
 
 
-ToStrFunc = Callable[["TreeSpec", List[str]], str]
-MaybeFromStrFunc = Callable[[str], Optional[Tuple[Any, Context, str]]]
-
-
 # A NodeDef holds two callables:
 # - flatten_fn should take the collection and return a flat list of values.
 #   It can also return some context that is used in reconstructing the
@@ -122,11 +118,9 @@ SERIALIZED_TYPE_TO_PYTHON_TYPE: Dict[str, Type[Any]] = {}
 
 
 def _register_pytree_node(
-    cls: Any,
+    cls: Type[Any],
     flatten_fn: FlattenFunc,
     unflatten_fn: UnflattenFunc,
-    to_str_fn: Optional[ToStrFunc] = None,  # deprecated
-    maybe_from_str_fn: Optional[MaybeFromStrFunc] = None,  # deprecated
     *,
     serialized_type_name: Optional[str] = None,
     to_dumpable_context: Optional[ToDumpableContextFn] = None,
@@ -155,8 +149,6 @@ def _register_pytree_node(
         cls,
         flatten_fn,
         unflatten_fn,
-        to_str_fn=to_str_fn,  # deprecated
-        maybe_from_str_fn=maybe_from_str_fn,  # deprecated
         serialized_type_name=serialized_type_name,
         to_dumpable_context=to_dumpable_context,
         from_dumpable_context=from_dumpable_context,
@@ -181,11 +173,9 @@ register_pytree_node = _register_pytree_node
 
 
 def _private_register_pytree_node(
-    cls: Any,
+    cls: Type[Any],
     flatten_fn: FlattenFunc,
     unflatten_fn: UnflattenFunc,
-    to_str_fn: Optional[ToStrFunc] = None,  # deprecated
-    maybe_from_str_fn: Optional[MaybeFromStrFunc] = None,  # deprecated
     *,
     serialized_type_name: Optional[str] = None,
     to_dumpable_context: Optional[ToDumpableContextFn] = None,
@@ -195,12 +185,6 @@ def _private_register_pytree_node(
     for the Python pytree only. End-users should use :func:`register_pytree_node`
     instead.
     """
-    if to_str_fn is not None or maybe_from_str_fn is not None:
-        warnings.warn(
-            "to_str_fn and maybe_from_str_fn is deprecated. "
-            "Please use to_dumpable_context and from_dumpable_context instead."
-        )
-
     if cls in SUPPORTED_NODES:
         raise ValueError(f"{cls} is already registered as pytree node.")
 
@@ -310,7 +294,7 @@ _private_register_pytree_node(
     serialized_type_name="builtins.tuple",
 )
 _private_register_pytree_node(
-    namedtuple,
+    namedtuple,  # type: ignore[arg-type]
     _namedtuple_flatten,
     _namedtuple_unflatten,
     to_dumpable_context=_namedtuple_serialize,
@@ -480,12 +464,12 @@ def tree_structure(tree: PyTree) -> TreeSpec:
     return tree_flatten(tree)[1]
 
 
-def tree_map(func: Any, tree: PyTree) -> PyTree:
+def tree_map(func: Callable[..., Any], tree: PyTree) -> PyTree:
     flat_args, spec = tree_flatten(tree)
     return tree_unflatten([func(i) for i in flat_args], spec)
 
 
-def tree_map_(func: Any, tree: PyTree) -> PyTree:
+def tree_map_(func: Callable[..., Any], tree: PyTree) -> PyTree:
     flat_args = tree_leaves(tree)
     deque(map(func, flat_args), maxlen=0)  # consume and exhaust the iterable
     return tree
@@ -867,8 +851,8 @@ def treespec_dumps(treespec: TreeSpec, protocol: Optional[int] = None) -> str:
     return str_spec
 
 
-def treespec_loads(data: str) -> TreeSpec:
-    protocol, json_schema = json.loads(data)
+def treespec_loads(serialized: str) -> TreeSpec:
+    protocol, json_schema = json.loads(serialized)
 
     if protocol in _SUPPORTED_PROTOCOLS:
         return _SUPPORTED_PROTOCOLS[protocol].json_to_treespec(json_schema)
