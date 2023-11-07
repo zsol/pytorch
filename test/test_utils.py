@@ -737,7 +737,6 @@ class TestStandaloneCPPJIT(TestCase):
                 #include <iostream>
                 #include <torch/torch.h>
                 int main() {
-                    std::cout <<"ionut3";
                     auto x = torch::eye(3);
                     std::cout << x << std::endl;
                 }
@@ -760,7 +759,8 @@ class TestStandaloneCPPJIT(TestCase):
             )
             env = os.environ.copy()
             cutpipath="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/extras/CUPTI/lib64"
-            env['PATH'] = cutpipath + os.pathsep + env['PATH']
+            cudaPath="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/bin"
+            env['PATH'] = cutpipath + os.pathsep + cudaPath + os.pathsep + env['PATH']
             print(env['PATH'])
             entries = os.listdir(cutpipath)
             for entry in entries:
