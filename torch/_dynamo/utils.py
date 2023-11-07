@@ -28,6 +28,8 @@ import weakref
 from contextlib import contextmanager
 from functools import lru_cache, wraps
 from pathlib import Path
+
+from types import MethodWrapperType
 from typing import Any, Dict, Optional, Set, Tuple, Union
 
 try:
@@ -970,13 +972,13 @@ def iter_contains(items, search, tx, options, check_tensor_identity=False):
 
 def dict_param_key_ids(value):
     return {
-        id(k) for k in value.keys() if isinstance(k, (torch.nn.Parameter, torch.Tensor))
+        id(k) for k in value.keys() if isinstance(k, (torch.Tensor, MethodWrapperType))
     }
 
 
 def dict_const_keys(value):
     return {
-        k for k in value.keys() if not isinstance(k, (torch.nn.Parameter, torch.Tensor))
+        k for k in value.keys() if not isinstance(k, (torch.Tensor, MethodWrapperType))
     }
 
 

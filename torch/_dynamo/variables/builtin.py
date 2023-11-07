@@ -806,22 +806,12 @@ class BuiltinVariable(VariableTracker):
             # determine the control flow
             return obj
 
-        # TODO This should probably be treated as a dict, or dicts should also be treated here
-        if self.fn == set:
-            cls = SetVariable
-        else:
-            cls = variables.BaseListVariable.cls_for(self.fn)
+        cls = variables.BaseListVariable.cls_for(self.fn)
         if obj is None:
-            if cls is SetVariable:
-                return cls(
-                    [],
-                    mutable_local=MutableLocal(),
-                )
-            else:
-                return cls(
-                    [],
-                    mutable_local=MutableLocal(),
-                )
+            return cls(
+                [],
+                mutable_local=MutableLocal(),
+            )
         elif obj.has_unpack_var_sequence(tx):
             guards = set()
             if obj.source and not is_constant_source(obj.source):
@@ -829,12 +819,6 @@ class BuiltinVariable(VariableTracker):
                     guards.add(obj.source.make_guard(GuardBuilder.TUPLE_ITERATOR_LEN))
                 else:
                     guards.add(obj.source.make_guard(GuardBuilder.LIST_LENGTH))
-            if cls is SetVariable:
-                return cls(
-                    list(obj.unpack_var_sequence(tx)),
-                    mutable_local=MutableLocal(),
-                    guards=guards,
-                ).add_options(self, obj)
 
             return cls(
                 list(obj.unpack_var_sequence(tx)),
@@ -845,7 +829,6 @@ class BuiltinVariable(VariableTracker):
     call_iter = _call_iter_tuple_list
     call_tuple = _call_iter_tuple_list
     call_list = _call_iter_tuple_list
-    call_set = _call_iter_tuple_list
 
     def call_callable(self, tx, arg):
         from .functions import BaseUserFunctionVariable
@@ -893,6 +876,28 @@ class BuiltinVariable(VariableTracker):
                 items, user_cls=user_cls, mutable_local=MutableLocal()
             )
         unimplemented(f"dict(): {args} {kwargs}")
+
+    def call_set(self, tx, *args, **kwargs):
+        # Can we merge this implementation and call_dict's one?
+        assert not kwargs
+        if not args:
+            return SetVariable({}, mutable_local=MutableLocal())
+        assert len(args) == 1
+        arg = args[0]
+        if isinstance(arg, variables.SetVariable):
+            return arg.clone(mutable_local=MutableLocal())
+        elif isinstance(
+            arg,
+            (
+                ListVariable,
+                TupleVariable,
+                ListIteratorVariable,
+            ),
+        ):
+            items = set(arg.unpack_var_sequence(tx))
+            return SetVariable(items, mutable_local=MutableLocal())
+        else:
+            unimplemented(f"set(): {args} {kwargs}")
 
     def call_zip(self, tx, *args):
         options = VariableTracker.propagate(self, args)
@@ -1400,9 +1405,7 @@ class BuiltinVariable(VariableTracker):
         if isinstance(left, SetVariable):
             if not type(left) == type(right):  # Mismatch in BaseListVariable subclasses
                 _unimplemented()
-            return ConstantVariable.create(
-                op(left._underlying_items, right._underlying_items)
-            )
+            return ConstantVariable.create(op(left.set_items, right._items))
 
         if isinstance(left, TensorVariable) or isinstance(right, TensorVariable):
             from .builder import wrap_fx_proxy_cls
