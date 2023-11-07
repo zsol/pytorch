@@ -3839,6 +3839,7 @@ def aot_dispatch_autograd(flat_fn, flat_args: List[Any], aot_config: AOTConfig, 
                 for x in symint_outs
             ), str([type(x) for x in symint_outs])
             ctx.symints = symint_outs
+            torch.autograd.Function.save_symints(symint_outs)
 
             raw_returns = fw_outs[0:num_forward_returns]
 

@@ -560,6 +560,17 @@ class Function(_SingleLevelFunction):
 
         return custom_function_call(cls, *args, **kwargs)
 
+    @staticmethod
+    def _compiled_autograd_key(ctx):
+        from torch._functorch.aot_autograd import AOT_COUNTER
+        symints = getattr(Function, "_symints", [])
+        return (next(AOT_COUNTER), *symints)
+
+    _symints = []
+
+    @classmethod
+    def save_symints(cls, symints):
+        cls._symints = symints
 
 def once_differentiable(fn):
     @functools.wraps(fn)
