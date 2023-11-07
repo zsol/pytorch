@@ -11,14 +11,15 @@ from collections import defaultdict, deque
 from contextlib import contextmanager
 from dataclasses import dataclass, fields, is_dataclass
 from enum import auto, Enum
-from typing import Any, Callable, List, Optional, Type
+from typing import Any, Callable, List, Optional, Tuple, Type
 
 import torch
 import torch.distributed as dist
+
 from torch.autograd import Function, Variable
 from torch.distributed.algorithms.join import Join, Joinable, JoinHook
-
 from torch.utils._pytree import tree_flatten, tree_unflatten
+from torch.utils.hooks import RemovableHandle
 
 RPC_AVAILABLE = False
 if dist.is_available():
@@ -43,6 +44,9 @@ from .scatter_gather import gather, scatter_kwargs  # noqa: F401
 __all__ = ["DistributedDataParallel"]
 
 logger = logging.getLogger(__name__)
+
+_dummy_compiler_var = torch.zeros(1)
+_dummy_compiler_var.requires_grad = False
 
 
 @dataclass
@@ -849,6 +853,51 @@ class DistributedDataParallel(Module, Joinable):
 
         self._lazy_init_ran = False
 
+        # Register the AccumulaGrad post hooks even if we won't compile DDP. This
+        # will avoid compiling the hooks twice.
+        self._comm_hooks: List[Tuple[Callable, object]] = []
+        self._acc_grad_hooks: List[RemovableHandle] = []
+        self._ddp_python_hook = torch._dynamo.config.ddp_python_hook
+        if self._ddp_python_hook:
+            from torch._dynamo.skipfiles import MOD_INLINELIST
+
+            MOD_INLINELIST.add("torch.nn.parallel.distributed")
+            self._register_acc_grad_hook()
+        _dummy_compiler_var.to(self.device)
+
+    def _register_acc_grad_hook(self):
+        def compiled_acc_grad_hook(
+            param,
+            *,
+            param_index: int,
+            div_factor: int,
+        ):
+            if not self.require_backward_grad_sync:
+                return
+
+            if self._comm_hooks:
+                for hook, state in self._comm_hooks:
+                    hook(
+                        state, (param.grad, param, param_index)
+                    )
+            else:
+                gradient = param.grad / div_factor
+                gradient = torch.distributed._functional_collectives.all_reduce(
+                    gradient, "sum", self.process_group
+                )
+                param.grad.copy_(gradient)
+
+        for index, param in enumerate(self._module_parameters):
+            self._acc_grad_hooks.append(
+                param.register_post_accumulate_grad_hook(
+                    functools.partial(
+                        compiled_acc_grad_hook,
+                        param_index=index,
+                        div_factor=dist.get_world_size(self.process_group),
+                    )
+                )
+            )
+
     def _register_delay_all_reduce_hook(
         self,
         bucket_cap_mb,
@@ -1341,8 +1390,11 @@ class DistributedDataParallel(Module, Joinable):
             DistributedDataParallel._active_ddp_module = None
 
     def _run_ddp_forward(self, *inputs, **kwargs):
-        with self._inside_ddp_forward():
+        if self._ddp_python_hook:
             return self.module(*inputs, **kwargs)  # type: ignore[index]
+        else:
+            with self._inside_ddp_forward():
+                return self.module(*inputs, **kwargs)  # type: ignore[index]
 
     def _clear_grad_buffer(self):
         # Making param.grad points to the grad buffers before backward is based on the
@@ -1372,8 +1424,20 @@ class DistributedDataParallel(Module, Joinable):
         self._lazy_init_ran = True
 
     def _pre_forward(self, *inputs, **kwargs):
-        if not self._lazy_init_ran:
+        if self._ddp_python_hook and torch._utils.is_compiling():
+            global _dummy_compiler_var
+            _dummy_compiler_var += 1
+            return inputs, kwargs
+
+        # Remove the acc_gradient hooks as we are not compiling DDP.
+        if self._acc_grad_hooks:
+            for index, h in enumerate(self._acc_grad_hooks):
+                h.remove()
+            self._acc_grad_hooks.clear()
+
+        if not self._lazy_init_ran and not torch._utils.is_compiling():
             self._lazy_init()
+
         if self._delay_all_reduce_all_params:
             return inputs, kwargs
 
@@ -1437,6 +1501,11 @@ class DistributedDataParallel(Module, Joinable):
             return inputs, kwargs
 
     def _post_forward(self, output):
+        if self._ddp_python_hook and torch._utils.is_compiling():
+            global _dummy_compiler_var
+            _dummy_compiler_var += 1
+            return output
+
         if self._delay_all_reduce_all_params:
             self._clear_grad_buffer()
             return
@@ -1860,6 +1929,7 @@ class DistributedDataParallel(Module, Joinable):
         self._check_comm_hook(hook)
         assert self.logger is not None
         self.logger._set_comm_hook_name(hook.__qualname__)
+        self._comm_hooks.append((hook, state))
         dist._register_comm_hook(self.reducer, state, hook)
 
     def _register_builtin_comm_hook(self, comm_hook_type):
@@ -2083,10 +2153,7 @@ class DistributedDataParallel(Module, Joinable):
                 "Communication hook: return annotation should be torch.futures.Future[torch.Tensor].",
             )
 
-        if hook.__name__ in [
-            "bf16_compress_hook",
-            "bf16_compress_wrapper_hook",
-        ] and (
+        if hook.__name__ in ["bf16_compress_hook", "bf16_compress_wrapper_hook",] and (
             (torch.version.cuda is None and torch.version.hip is None)
             or (
                 torch.version.cuda is not None

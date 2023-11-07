@@ -188,8 +188,8 @@ if torch.distributed.is_available():
         "torch.distributed.tensor.parallel._data_parallel_utils",
         "torch.distributed.tensor.parallel._utils",
         "torch.distributed.tensor.parallel.style",
+        "torch.distributed._composable.replicate",
     }
-
 
 # Force inline functions under these modules, even they are in *_SKIPLIST.
 # We are using python module name instead of file or directory object to avoid circular dependency.
@@ -221,6 +221,8 @@ MOD_INLINELIST = {
 if torch.distributed.is_available():
     MOD_INLINELIST.add("torch.distributed")
     MOD_INLINELIST.add("torch.distributed._functional_collectives")
+    MOD_INLINELIST.add("torch.distributed.algorithms.dpp_comm_hooks.default_hooks")
+    MOD_INLINELIST.add("torch.distributed._composable.replicate")
 
 
 # TODO: support adding bound method into this list

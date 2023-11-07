@@ -692,6 +692,10 @@ class SwapSavedVariables {
   StashedVars<SavedVariable> stashed_variables;
   StashedVars<at::Tensor> stashed_tensors;
   StashedVars<c10::SymInt> stashed_symints;
+
+  // This gradient allows us to later fetch the result of AccumulateGrad as
+  // AccumulateGrad is an inplace action.
+  at::Tensor gradient;
 };
 
 } // namespace torch::dynamo::autograd
