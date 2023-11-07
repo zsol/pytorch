@@ -1019,6 +1019,9 @@ class Kernel(CodeGen):
                             new_bounds = new_bounds | pos
 
                     stm = ops.add(var, self.rename_indexing(size))
+                    # ops.add don't propagate the bounds
+                    stm.value.bounds = new_bounds
+
                     # Mixed negative and non-negative
                     if var.bounds.upper >= 0:
                         lt = ops.lt(var, "0")
