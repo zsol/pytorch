@@ -729,6 +729,7 @@ class TestAssert(TestCase):
 @unittest.skipIf(IS_SANDCASTLE, "cpp_extension is OSS only")
 class TestStandaloneCPPJIT(TestCase):
     def test_load_standalone(self):
+        print('ionut')
         build_dir = tempfile.mkdtemp()
         try:
             src_path = os.path.join(build_dir, "main.cpp")
@@ -758,7 +759,11 @@ class TestStandaloneCPPJIT(TestCase):
                 os.path.join(build_dir, f"standalone_load_test{ext}")
             )
             env = os.environ.copy()
-            env['PATH'] = "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/extras/CUPTI/lib64" + os.pathsep + env['PATH']
+            cutpipath="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/extras/CUPTI/lib64"
+            env['PATH'] = cutpipath + os.pathsep + env['PATH']
+            entries = os.listdir(cutpipath)
+            for entry in entries:
+                print(entry)
             for shell in [True, False]:
                 r = subprocess.run(
                     [exec_path],
