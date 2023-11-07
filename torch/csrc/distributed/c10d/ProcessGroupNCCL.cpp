@@ -861,6 +861,8 @@ ProcessGroupNCCL::ProcessGroupNCCL(
       traceKeyStart_(getTraceStartKey("NCCL", rank)),
       traceKeyEnd_(getTraceEndKey("NCCL", rank)),
       terminateProcessGroup_(false),
+      terminateHeartbeatMonitorThread_(false),
+      shutdownMode_(false),
       uid_(process_group_id++) {
   TORCH_CHECK(
       at::cuda::getNumGPUs() != 0,
@@ -870,6 +872,10 @@ ProcessGroupNCCL::ProcessGroupNCCL(
       parseEnvVarIntDefault(NCCL_ASYNC_ERROR_HANDLING, 3 /*SkipCleanUp*/));
   desyncDebug_ = parseEnvVarFlag(NCCL_DESYNC_DEBUG) ||
       (dist_debug_level_ >= DebugLevel::Detail);
+  heartbeat_ = 1ULL;
+  monitorThreadEnabled_.store(parseEnvVarFlag(TORCH_NCCL_ENABLE_MONITORING));
+  heartbeatTimeoutInSec_ =
+      parseEnvVarIntDefault(TORCH_NCCL_HEARTBEAT_TIMEOUT_S, 60 * 2 /*2 Mins*/);
 #ifdef ENABLE_NCCL_ERROR_CHECKING
   enableTiming_.store(
       parseEnvVarFlag(NCCL_ENABLE_TIMING) || desyncDebug_ ||
@@ -1131,6 +1137,8 @@ void ProcessGroupNCCL::shutdown() {
   abort(abortReason);
 
   workMetaListCV_.notify_one();
+  terminateHeartbeatMonitorThread_.store(true);
+  monitorWakeUpCV_.notify_one();
 }
 
 ProcessGroupNCCL::~ProcessGroupNCCL() {
@@ -1150,11 +1158,98 @@ ProcessGroupNCCL::~ProcessGroupNCCL() {
   // threads dying due to aborted communicator and raising a SIGABRT
   std::string abortReason = c10::str("Process Group destroyed on rank ", rank_);
   abort(abortReason);
+
+  // We need to wait for abort to finish before we can safely shut down
+  // heartbeat monitoring thread.
+  terminateHeartbeatMonitorThread_.store(true);
+  monitorWakeUpCV_.notify_one();
+#ifdef ENABLE_NCCL_ERROR_CHECKING
+  if (ncclHeartbeatMonitorThread_.joinable()) {
+    ncclHeartbeatMonitorThread_.join();
+  }
+#endif
+}
+
+void dump_debugging_info() {
+  LOG(ERROR)
+      << "No PGNCCL's watchdog heartbeat detected, so we are dumping debug info.";
+  if (parseEnvVarIntDefault("TORCH_NCCL_TRACE_BUFFER_SIZE", 0) > 0) {
+    // TODO: Find the right and proper way to dump the debug info.
+    // We cannot print out debugging info directly.
+    LOG(ERROR) << "nccl_trace: " << dump_nccl_trace();
+  }
+}
+
+void ProcessGroupNCCL::terminateProcess(std::string errMsg) {
+  // Logging with `FATAL`, after errMsg printed, it calls `std::abort()`
+  // to terminate the program execution.
+  LOG(FATAL) << errMsg;
+}
+
+void ProcessGroupNCCL::heartbeatMonitor() {
+  uint64_t heartBeatCounter = 0ULL;
+  while (true) {
+    // This won't have any lock since this lock is only used here.
+    // Please be aware that mutex `monitorMutex_` should not be used
+    // somewhere else to avoid the deadlock.
+    std::unique_lock<std::mutex> lock(monitorMutex_);
+    if (monitorWakeUpCV_.wait_for(
+            lock, std::chrono::seconds(heartbeatTimeoutInSec_), [&] {
+              return terminateHeartbeatMonitorThread_.load();
+            })) {
+      // If monitorWakeUpCV_ gets notified, we early return.
+      return;
+    } else {
+      auto heartbeat = heartbeat_;
+      if (heartbeat > heartBeatCounter) {
+        heartBeatCounter = heartbeat;
+      } else {
+        // No heartbeat increase detected and timeout.
+        break;
+      }
+    }
+  }
+
+  // In the timeout case and we now only dump the flight recorder
+  // to std::out. Down the road, if we have more complicated or blocking
+  // operations, we might need to use a side thread to do it.
+  dump_debugging_info();
+
+  // Create a error message reported from MonitorThread, so
+  // we throw exception and make the whole process to be killed.
+  const auto exitMsg = c10::str(
+      "[Rank ",
+      rank_,
+      "] NCCL monitor thread timeout. Basically, this could ",
+      "be a system error and please file a bug to pytorch.");
+
+  // There might be some cases when we first kill the watchdog thread and get
+  // stuck in abort() method, so we want to wait for some buffer time before
+  // killing the process.
+  if ((terminateProcessGroup_.load() || shutdownMode_.load()) &&
+      !terminateHeartbeatMonitorThread_.load()) {
+    // Leave six mins for desync report generation or process group destroy.
+    std::unique_lock<std::mutex> lock(monitorMutex_);
+    monitorWakeUpCV_.wait_for(
+        lock, std::chrono::seconds(heartbeatTimeoutInSec_ * 3), [] {
+          return false;
+        });
+  }
+
+  if (!terminateHeartbeatMonitorThread_.load()) {
+    LOG(ERROR)
+        << "monitoring thread detects no heartbeat and will kill the process!";
+    terminateProcess(exitMsg);
+  }
 }
 
 void ProcessGroupNCCL::ncclCommWatchdog() {
   try {
     VLOG(2) << "[Rank " << rank_ << "] NCCL watchdog thread started!";
+    if (monitorThreadEnabled_.load()) {
+      ncclHeartbeatMonitorThread_ =
+          std::thread(&ProcessGroupNCCL::heartbeatMonitor, this);
+    }
     workCleanupLoop();
     VLOG(2) << "[Rank " << rank_
             << "] NCCL watchdog thread terminated normally";
@@ -1227,6 +1322,8 @@ void ProcessGroupNCCL::workCleanupLoop() {
         lock,
         std::chrono::milliseconds(kWatchdogThreadSleepMillis),
         [&]() -> bool { return terminateProcessGroup_.load(); });
+    // Bump up heart beat by one.
+    heartbeat_++;
 
     for (auto it = workMetaList_.begin(); it != workMetaList_.end();
          /* no increment */) {
@@ -1246,6 +1343,7 @@ void ProcessGroupNCCL::workCleanupLoop() {
         // Report desync state in case of timeout
         if (desyncDebug_ && timedOut) {
           try {
+            shutdownMode_.store(true);
             auto desyncMsg = retrieveDesyncReport(store_, "NCCL", rank_, size_);
             LOG(ERROR) << desyncMsg;
           } catch (const std::exception& e) {

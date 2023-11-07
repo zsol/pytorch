@@ -1,4 +1,5 @@
 #include <chrono>
+#include <thread>
 
 #include <c10/util/irange.h>
 #include <torch/csrc/cuda/nccl.h>
@@ -141,6 +142,43 @@ class ProcessGroupNCCLTimedOutErrors : public ProcessGroupNCCLSimulateErrors {
   bool set_timedout_error_;
 };
 
+class ProcessGroupNCCLNoHeartbeat : public c10d::ProcessGroupNCCL {
+ public:
+  ProcessGroupNCCLNoHeartbeat(
+      const c10::intrusive_ptr<c10d::Store>& store,
+      int rank,
+      int size,
+      c10::intrusive_ptr<c10d::ProcessGroupNCCL::Options> opts)
+      : ProcessGroupNCCL(store, rank, size, opts) {
+    hasMonitorThreadCaughtError_.store(false);
+  }
+
+  std::mutex& getWatchdogMutex() {
+    return workMetaListMutex_;
+  }
+
+  bool getErrorCaughtFlag() {
+    return hasMonitorThreadCaughtError_.load();
+  }
+
+ protected:
+  void heartbeatMonitor() override {
+    try {
+      c10d::ProcessGroupNCCL::heartbeatMonitor();
+    } catch (std::runtime_error& e) {
+      hasMonitorThreadCaughtError_.store(true);
+    }
+  }
+
+  // It's really hard to unit test std::abort. So we override it instead.
+  // Commented this override, we do see process aborted with core dump.
+  void terminateProcess(std::string errMsg) override {
+    throw std::runtime_error(errMsg);
+  }
+
+  std::atomic<bool> hasMonitorThreadCaughtError_;
+};
+
 class ProcessGroupNCCLErrorsTest : public ::testing::Test {
  protected:
   bool skipTest() {
@@ -158,6 +196,7 @@ class ProcessGroupNCCLErrorsTest : public ::testing::Test {
   }
 
   void SetUp() override {
+    c10::initLogging();
     size_t numDevices = cudaNumDevices();
     TemporaryFile file;
     store_ = c10::make_intrusive<::c10d::FileStore>(file.path, 1);
@@ -256,4 +295,39 @@ TEST_F(ProcessGroupNCCLErrorsTest, testNCCLErrorsNonBlocking) {
   EXPECT_FALSE(work->isSuccess());
 
   // Communicators might be aborted here, further operations would fail.
+}
+
+TEST_F(ProcessGroupNCCLErrorsTest, testNCCLErrorsNoHeartbeat) {
+  if (skipTest()) {
+    return;
+  }
+
+  int heartBeatIntervalInSec = 2;
+  std::string timeInterval = std::to_string(heartBeatIntervalInSec);
+  ASSERT_TRUE(setenv(c10d::NCCL_BLOCKING_WAIT, "1", 1) == 0);
+  ASSERT_TRUE(
+      setenv(c10d::TORCH_NCCL_HEARTBEAT_TIMEOUT_S, timeInterval.c_str(), 1) ==
+      0);
+  ASSERT_TRUE(setenv(c10d::TORCH_NCCL_ENABLE_MONITORING, "1", 1) == 0);
+  auto options = c10d::ProcessGroupNCCL::Options::create();
+  options->timeout = std::chrono::milliseconds(30000);
+  ProcessGroupNCCLNoHeartbeat pg(store_, 0, 1, options);
+
+  auto work = pg.allreduce(tensors_);
+  work->wait();
+  EXPECT_TRUE(work->isSuccess());
+
+  work = pg.allreduce(tensors_);
+  {
+    // Now run all reduce with errors.
+    std::lock_guard<std::mutex> lock(pg.getWatchdogMutex());
+    LOG(INFO) << "Lock watchdog thread.";
+    // Wait for a while before monitor thread throws exceptions.
+    std::this_thread::sleep_for(
+        std::chrono::seconds(heartBeatIntervalInSec * 3));
+    // Check the monitoring thread launched and exception thrown.
+    EXPECT_TRUE(pg.getErrorCaughtFlag());
+  }
+  work->wait();
+  EXPECT_TRUE(work->isSuccess());
 }
