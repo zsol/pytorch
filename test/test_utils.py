@@ -736,13 +736,14 @@ class TestStandaloneCPPJIT(TestCase):
                 #include <iostream>
                 #include <torch/torch.h>
                 int main() {
+                    std::cout <<"ionut3";
                     auto x = torch::eye(3);
                     std::cout << x << std::endl;
                 }
             """)
             with open(src_path, "w") as f:
                 f.write(src)
-
+            print('ionut')
             exec_path = torch.utils.cpp_extension.load(
                 "standalone_load_test",
                 src_path,
@@ -756,12 +757,14 @@ class TestStandaloneCPPJIT(TestCase):
                 exec_path,
                 os.path.join(build_dir, f"standalone_load_test{ext}")
             )
-
+            env = os.environ.copy()
+            env['PATH'] = "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/extras/CUPTI/lib64" + os.pathsep + env['PATH']
             for shell in [True, False]:
                 r = subprocess.run(
                     [exec_path],
                     shell=shell,
                     stdout=subprocess.PIPE,
+                    env = env
                 )
                 print('ionut')
                 print(r.stdout.decode("utf-8"))
