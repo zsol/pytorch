@@ -760,9 +760,6 @@ class TestStandaloneCPPJIT(TestCase):
                 cutpipath="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/extras/CUPTI/lib64"
                 cudaPath="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/bin"
                 env['PATH'] = cutpipath + os.pathsep + cudaPath + os.pathsep + env['PATH']
-            entries = os.listdir(cutpipath)
-            for entry in entries:
-                print(entry)
             for shell in [True, False]:
                 r = subprocess.run(
                     [exec_path],
