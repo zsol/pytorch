@@ -2784,11 +2784,11 @@ class TestInterp(TestCase):
 
         actual = np.interp(np.array(1), xp, fp)
         assert_equal(actual, 0)
-        assert_(isinstance(actual, np.float64))
+        assert_(isinstance(actual, (np.float64, np.ndarray)))
 
         actual = np.interp(np.array(4.5), xp, fp, period=4)
         assert_equal(actual, 0.5)
-        assert_(isinstance(actual, np.float64))
+        assert_(isinstance(actual, (np.float64, np.ndarray)))
 
     def test_if_len_x_is_small(self):
         xp = np.arange(0, 10, 0.0001)

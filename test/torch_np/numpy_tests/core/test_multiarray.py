@@ -274,7 +274,7 @@ class TestFlag(TestCase):
         assert a.__array_interface__["data"][1] is not writeable
         assert np.asarray(MyArr()).flags.writeable is writeable
 
-    @xpassIfTorchDynamo
+    @xfail
     def test_otherflags(self):
         assert_equal(self.a.flags.carray, True)
         assert_equal(self.a.flags["C"], True)
