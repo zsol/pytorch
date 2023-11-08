@@ -757,8 +757,8 @@ class TestStandaloneCPPJIT(TestCase):
             )
             env = os.environ.copy()
             if IS_WINDOWS:
-                cutpipath="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/extras/CUPTI/lib64"
-                cudaPath="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/bin"
+                cutpipath = "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/extras/CUPTI/lib64"
+                cudaPath = "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/bin"
                 env['PATH'] = cutpipath + os.pathsep + cudaPath + os.pathsep + env['PATH']
             for shell in [True, False]:
                 r = subprocess.run(
