@@ -332,8 +332,13 @@ class FakeTensorConverter:
         dynamic_dims: "Optional[DimList[DimDynamic]]" = None,
         constraint_dims: "Optional[DimList[DimConstraint]]" = None,
         memoized_only=False,
+        allocate_fresh_if_metadata_mutated=False,
     ):
-        maybe_memo = self._get_memo(t)
+        if allocate_fresh_if_metadata_mutated:
+            assert not memoized_only
+        maybe_memo = None
+        if not allocate_fresh_if_metadata_mutated:
+            maybe_memo = self._get_memo(t)
         if maybe_memo is not None:
             return maybe_memo
         if memoized_only:
@@ -369,9 +374,22 @@ class FakeTensorConverter:
             source=source,
             dynamic_dims=dynamic_dims,
             constraint_dims=constraint_dims,
+            allocate_fresh_if_metadata_mutated=allocate_fresh_if_metadata_mutated,
         )
         if out is NotImplemented:
             raise UnsupportedFakeTensorException("meta converter nyi")
+
+        # Bind original shape and stride to the FakeTensor
+        # We must do this because as we trace, transforms like setting .data will
+        # change the fake tensor. This means that if we do not keep track of the original meta,
+        # we will lose it.
+        # This matters, because there will be points where we enter tracing
+        # (like aot_autograd after dynamo), where accessing memo will give us the tensor
+        # as it is at the end of trace, but we need to get the tensor as it was before tracing.
+        out._original_sym_shape = out.size()
+        out._original_sym_stride = out.stride()
+        out._original_sym_storage_offset = out.storage_offset()
+
         if make_constant:
             self.add_constant_storage_mapping(out)
         # NB: meta_converter set the memo
@@ -407,6 +425,7 @@ class FakeTensorConverter:
         dynamic_dims=None,
         constraint_dims=None,
         memoized_only=False,
+        allocate_fresh_if_metadata_mutated=False,
     ):
         return self.from_real_tensor(
             fake_mode,
@@ -418,6 +437,7 @@ class FakeTensorConverter:
             dynamic_dims=dynamic_dims,
             constraint_dims=constraint_dims,
             memoized_only=memoized_only,
+            allocate_fresh_if_metadata_mutated=allocate_fresh_if_metadata_mutated,
         )
 
 
@@ -1058,6 +1078,10 @@ class FakeTensor(torch.Tensor):
     # Indicates to our torch_dispatch dispatching infra that
     # this is an "infra" mode with lower dispatching precedence.
     _mode_key = torch._C._TorchDispatchModeKey.FAKE
+
+    _original_sym_shape: Optional[torch.Size] = None
+    _original_sym_stride: Optional[Tuple[torch.SymInt]] = None
+    _original_sym_storage_offset: Optional[torch.SymInt] = None
 
     @property
     def nonzero_memo(self):
@@ -1864,6 +1888,7 @@ class FakeTensorMode(TorchDispatchMode):
         # Setting this flag will force FakeTensorMode to return `None` if attempting to convert a tensor we have not
         # seen before.
         memoized_only=False,
+        allocate_fresh_if_metadata_mutated=False,
     ):
         shape_env = self.shape_env
         if static_shapes is None:
@@ -1882,6 +1907,7 @@ class FakeTensorMode(TorchDispatchMode):
             dynamic_dims=dynamic_dims,
             constraint_dims=constraint_dims,
             memoized_only=memoized_only,
+            allocate_fresh_if_metadata_mutated=allocate_fresh_if_metadata_mutated,
         )
 
 
