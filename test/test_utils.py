@@ -729,7 +729,6 @@ class TestAssert(TestCase):
 @unittest.skipIf(IS_SANDCASTLE, "cpp_extension is OSS only")
 class TestStandaloneCPPJIT(TestCase):
     def test_load_standalone(self):
-        print('ionut')
         build_dir = tempfile.mkdtemp()
         try:
             src_path = os.path.join(build_dir, "main.cpp")
@@ -743,7 +742,6 @@ class TestStandaloneCPPJIT(TestCase):
             """)
             with open(src_path, "w") as f:
                 f.write(src)
-            print('ionut')
             exec_path = torch.utils.cpp_extension.load(
                 "standalone_load_test",
                 src_path,
@@ -758,10 +756,10 @@ class TestStandaloneCPPJIT(TestCase):
                 os.path.join(build_dir, f"standalone_load_test{ext}")
             )
             env = os.environ.copy()
-            cutpipath="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/extras/CUPTI/lib64"
-            cudaPath="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/bin"
-            env['PATH'] = cutpipath + os.pathsep + cudaPath + os.pathsep + env['PATH']
-            print(env['PATH'])
+            if IS_WINDOWS:
+                cutpipath="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/extras/CUPTI/lib64"
+                cudaPath="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/bin"
+                env['PATH'] = cutpipath + os.pathsep + cudaPath + os.pathsep + env['PATH']
             entries = os.listdir(cutpipath)
             for entry in entries:
                 print(entry)
@@ -772,8 +770,6 @@ class TestStandaloneCPPJIT(TestCase):
                     stdout=subprocess.PIPE,
                     env = env
                 )
-                print('ionut')
-                print(r.stdout.decode("utf-8"))
                 self.assertEqual(r.returncode, 0)
                 self.assertEqual(
                     # Windows prints "\r\n" for newlines.
