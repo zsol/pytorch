@@ -25,6 +25,7 @@ from typing import (
     Callable,
     cast,
     DefaultDict,
+    Deque,
     Dict,
     Iterable,
     List,
@@ -330,6 +331,14 @@ def _defaultdict_deserialize(dumpable_context: DumpableContext) -> Context:
     return default_factory, keys
 
 
+def _deque_flatten(deq: Deque[Any]) -> Tuple[List[Any], Context]:
+    return list(deq), deq.maxlen
+
+
+def _deque_unflatten(values: Iterable[Any], context: Context) -> Deque[Any]:
+    return deque(values, maxlen=context)
+
+
 _private_register_pytree_node(
     tuple,
     _tuple_flatten,
@@ -369,6 +378,12 @@ _private_register_pytree_node(
     serialized_type_name="collections.defaultdict",
     to_dumpable_context=_defaultdict_serialize,
     from_dumpable_context=_defaultdict_deserialize,
+)
+_private_register_pytree_node(
+    deque,
+    _deque_flatten,
+    _deque_unflatten,
+    serialized_type_name="collections.deque",
 )
 
 

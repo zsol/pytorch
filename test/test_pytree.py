@@ -1,7 +1,7 @@
 # Owner(s): ["module: pytree"]
 
 import unittest
-from collections import defaultdict, namedtuple, OrderedDict
+from collections import defaultdict, deque, namedtuple, OrderedDict
 
 import torch
 import torch.utils._pytree.api.cxx as cxx_pytree
@@ -245,6 +245,46 @@ class TestGenericPytree(TestCase):
         run_test(defaultdict(int, {"abcdefg": torch.randn(2, 3)}))
         run_test(defaultdict(int, {1: torch.randn(2, 3)}))
         run_test(defaultdict(int, {"a": 1, "b": 2, "c": torch.randn(2, 3)}))
+
+    @parametrize(
+        "pytree_impl,gen_expected_fn",
+        [
+            subtest(
+                (
+                    py_pytree,
+                    lambda deq: py_pytree.TreeSpec(
+                        deque, deq.maxlen, [py_pytree.LeafSpec() for _ in deq]
+                    ),
+                ),
+                name="py",
+            ),
+            subtest(
+                (
+                    cxx_pytree,
+                    lambda deq: cxx_pytree.tree_structure(
+                        deque(deq, maxlen=deq.maxlen)
+                    ),
+                ),
+                name="cxx",
+            ),
+        ],
+    )
+    def test_flatten_unflatten_list(self, pytree_impl, gen_expected_fn):
+        def run_test(deq):
+            expected_spec = gen_expected_fn(deq)
+            values, treespec = pytree_impl.tree_flatten(deq)
+            self.assertTrue(isinstance(values, list))
+            self.assertEqual(values, list(deq))
+            self.assertEqual(treespec, expected_spec)
+
+            unflattened = pytree_impl.tree_unflatten(values, treespec)
+            self.assertEqual(unflattened, deq)
+            self.assertEqual(unflattened.maxlen, deq.maxlen)
+            self.assertTrue(isinstance(unflattened, deque))
+
+        run_test(deque([]))
+        run_test(deque([1.0, 2]))
+        run_test(deque([torch.tensor([1.0, 2]), 2, 10, 9, 11], maxlen=8))
 
     @parametrize(
         "pytree_impl",
