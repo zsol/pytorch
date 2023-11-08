@@ -114,7 +114,7 @@ def _retrieve_or_adapt_input_to_graph_set(
         return fx_name_to_onnxscript_value[onnx_tensor.name]
     if isinstance(onnx_tensor, (tuple, list)) and any(
         isinstance(node, torch.fx.Node)
-        and isinstance(node.meta.get("val"), torch.SymInt)
+        and fx_type_utils.is_torch_symbolic_type(node.meta.get("val"))
         for node in onnx_tensor
     ):
         # This intends to handle dynamic axes. for example, if the input size of op.Expand
@@ -128,9 +128,9 @@ def _retrieve_or_adapt_input_to_graph_set(
             ]
         ] = []
         for tensor in onnx_tensor:
-            if isinstance(tensor, torch.fx.Node) and isinstance(
-                tensor.meta.get("val"), torch.SymInt
-            ):
+            if isinstance(
+                tensor, torch.fx.Node
+            ) and fx_type_utils.is_torch_symbolic_type(tensor.meta.get("val")):
                 sequence_mixed_elements.append(fx_name_to_onnxscript_value[tensor.name])
             elif isinstance(tensor, int):
                 # NOTE: op.Concat doesn't support scalar, so we need to wrap it with
@@ -240,7 +240,7 @@ def _fill_tensor_shape_type(
             # None could be a valid value for return type, so we need to handle it.
             # e.g. the function: meta__scaled_dot_product_flash() in cpu mode.
             continue
-        elif isinstance(expected_value, (torch.SymInt, torch.SymFloat, torch.SymBool)):
+        elif fx_type_utils.is_torch_symbolic_type(expected_value):
             # aten::sym_size output is a int, not a tensor, which stands
             # for the size of one dim. We treat it as 0-D tensor.
             onnxscript_value.dtype = fx_type_utils.from_sym_value_to_torch_dtype(
@@ -583,7 +583,7 @@ class FxOnnxInterpreter:
                 dtype=fake_tensor.dtype,
             )
 
-        elif isinstance(fake_tensor, (torch.SymBool, torch.SymInt, torch.SymFloat)):
+        elif fx_type_utils.is_torch_symbolic_type(fake_tensor):
             output = onnxscript_graph.add_input(
                 input_name=node.name,
                 shape=[],
