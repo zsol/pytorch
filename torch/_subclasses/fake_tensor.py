@@ -372,6 +372,7 @@ class FakeTensorConverter:
         )
         if out is NotImplemented:
             raise UnsupportedFakeTensorException("meta converter nyi")
+
         if make_constant:
             self.add_constant_storage_mapping(out)
         # NB: meta_converter set the memo
